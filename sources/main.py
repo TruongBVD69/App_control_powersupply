@@ -121,6 +121,71 @@ def output_off():
     send_cmd('OUTP OFF')
     lbl_output.config(text="🔴 Output: OFF", fg="red")
 
+def set_ovp(enable: bool):
+    if not ser or not ser.is_open:
+        messagebox.showerror("Lỗi", "Chưa kết nối thiết bị!")
+        return
+    val = entry_ovp.get().strip()
+    if enable:
+        if val == "":
+            messagebox.showerror("Lỗi", "Nhập giá trị OVP trước!")
+            return
+        try:
+            v = float(val)
+            if device_type == "GPP":
+                send_cmd(f'OVP {v}')
+                send_cmd('OVP ON')
+            elif device_type == "KEYSIGHT":
+                send_cmd(f"VOLT:PROT {v}")
+                send_cmd("VOLT:PROT:STATE ON")
+            messagebox.showinfo("Thành công", f"Bật OVP = {v}V")
+            btn_ovp_on.config(bg="lightgreen")
+            btn_ovp_off.config(bg="SystemButtonFace")
+        except:
+            messagebox.showerror("Lỗi", "Giá trị OVP không hợp lệ!")
+    else:
+        # OFF
+        if device_type == "GPP":
+            send_cmd('OVP OFF')
+        elif device_type == "KEYSIGHT":
+            send_cmd("VOLT:PROT:STATE OFF")
+        messagebox.showinfo("Thành công", "Đã tắt OVP")
+        btn_ovp_on.config(bg="SystemButtonFace")
+        btn_ovp_off.config(bg="red")
+
+def set_ocp(enable: bool):
+    if not ser or not ser.is_open:
+        messagebox.showerror("Lỗi", "Chưa kết nối thiết bị!")
+        return
+    val = entry_ocp.get().strip()
+    if enable:
+        if val == "":
+            messagebox.showerror("Lỗi", "Nhập giá trị OCP trước!")
+            return
+        try:
+            c = float(val)
+            if device_type == "GPP":
+                send_cmd(f'OCP {c}')
+                send_cmd('OCP ON')
+            elif device_type == "KEYSIGHT":
+                send_cmd(f"CURR:PROT {c}")
+                send_cmd("CURR:PROT:STATE ON")
+            messagebox.showinfo("Thành công", f"Bật OCP = {c}A")
+            btn_ocp_on.config(bg="lightgreen")
+            btn_ocp_off.config(bg="SystemButtonFace")
+        except:
+            messagebox.showerror("Lỗi", "Giá trị OCP không hợp lệ!")
+    else:
+        # OFF
+        if device_type == "GPP":
+            send_cmd('OCP OFF')
+        elif device_type == "KEYSIGHT":
+            send_cmd("CURR:PROT:STATE OFF")
+        messagebox.showinfo("Thành công", "Đã tắt OCP")
+        btn_ocp_on.config(bg="SystemButtonFace")
+        btn_ocp_off.config(bg="red")
+
+
 def next_voltage():
     global index
     list_volt = get_entry_voltages()
@@ -246,6 +311,18 @@ def connect_com():
     port = combo_com.get().strip()
     baud = combo_baud.get().strip()
 
+    # 🔹 Kiểm tra dòng điện trước
+    if entry_current.get().strip() == "":
+        messagebox.showerror("Lỗi", "Vui lòng nhập dòng điện trước khi kết nối!")
+        return
+
+    # Chuyển giá trị dòng điện sang float
+    try:
+        curr_val = float(entry_current.get().strip())
+    except ValueError:
+        messagebox.showerror("Lỗi", "Giá trị dòng điện không hợp lệ!")
+        return
+
     if not port:
         messagebox.showerror("Lỗi", "Chưa chọn cổng COM.")
         return
@@ -274,7 +351,10 @@ def connect_com():
         lbl_status.config(text=f"✅ Kết nối: {resp} @ {baud}bps", fg="green")
         save_config(port)
         send_cmd('*CLS')
-        send_cmd('CURR 0.5')
+
+        # ✅ Gửi dòng điện ngay khi kết nối
+        send_cmd(f'CURR {curr_val}')
+
         output_on()
         apply_mode()
     except Exception as e:
@@ -311,7 +391,7 @@ def check_update():
                         "Bạn có muốn cập nhật ngay không?"
                     )
                     if answer:
-                        download_and_replace(download_url)
+                        download_and_replace(download_url, latest_version)
                 else:
                     messagebox.showinfo(
                         "Cập nhật mới",
@@ -327,7 +407,7 @@ def check_update():
     except Exception as e:
         messagebox.showerror("Lỗi", f"Không kiểm tra được update:\n{e}")
 
-def download_and_replace(download_url):
+def download_and_replace(download_url, latest_version):
     try:
         filename = download_url.split('/')[-1]
 
@@ -339,7 +419,7 @@ def download_and_replace(download_url):
         save_path = os.path.join(download_folder, filename)
         if os.path.exists(save_path):
             base, ext = os.path.splitext(save_path)
-            save_path = base + "_new" + ext
+            save_path = f"{base}_{latest_version}{ext}" # dùng version mới từ GitHub
 
         # Tải file
         r = requests.get(download_url, stream=True)
@@ -375,78 +455,75 @@ def download_and_replace(download_url):
 
 # ======================= GIAO DIỆN =======================
 root = tk.Tk()
+root.configure(bg="#f0f7ff")  # màu nền tổng thể
+refresh_version_info()
 
-refresh_version_info()  # Cập nhật tiêu đề và version khi khởi tạo cửa sổ
-
-# root.geometry("650x750")
 root.resizable(False, True)
 
-# --- Khối chọn thiết bị ---
-frame_device = tk.Frame(root)
-frame_device.pack(pady=5)
-tk.Label(frame_device, text="🔧 Chọn thiết bị:").pack(side="left", padx=5)
+# Style cho các LabelFrame
+frame_device = tk.LabelFrame(root, text="Thiết bị", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
+frame_device.pack(pady=5, padx=10, fill="x")
+tk.Label(frame_device, text="🔧 Chọn thiết bị:", bg="#ffffff", fg="#003366", font=("Arial", 10, "bold")).pack(side="left", padx=5)
 combo_device = ttk.Combobox(frame_device, width=20, values=["GPP-3323", "Keysight"])
 combo_device.set("GPP-3323")
 combo_device.pack(side="left", padx=5)
 combo_device.bind("<<ComboboxSelected>>", on_device_change)
 
-# --- Khối chọn COM & Baud ---
-frame_com = tk.Frame(root)
-frame_com.pack(pady=5)
+frame_com = tk.LabelFrame(root, text="Kết nối COM", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
+frame_com.pack(pady=5, padx=10, fill="x")
 combo_com = ttk.Combobox(frame_com, width=15)
 combo_com.pack(side="left", padx=5)
 
-tk.Label(frame_com, text="Baudrate:").pack(side="left", padx=5)
+tk.Label(frame_com, text="Baudrate:", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
 combo_baud = ttk.Combobox(frame_com, width=10, values=[4800,9600,19200,38400,57600,115200])
 combo_baud.set(115200)
 combo_baud.pack(side="left", padx=5)
 
-btn_refresh = tk.Button(frame_com, text="🔄 Refresh", command=refresh_com_list)
+btn_refresh = tk.Button(frame_com, text="🔄 Refresh", bg="#cce6ff", activebackground="#99ccff", command=refresh_com_list)
 btn_refresh.pack(side="left", padx=5)
-btn_connect = tk.Button(frame_com, text="🔌 Kết nối", command=connect_com)
+btn_connect = tk.Button(frame_com, text="🔌 Kết nối", bg="#ccffcc", activebackground="#99ff99", command=connect_com)
 btn_connect.pack(side="left", padx=5)
-btn_disconnect = tk.Button(frame_com, text="❌ Ngắt kết nối", command=disconnect_com)
+btn_disconnect = tk.Button(frame_com, text="❌ Ngắt kết nối", bg="#ffcccc", activebackground="#ff9999", command=disconnect_com)
 btn_disconnect.pack(side="left", padx=5)
 
-lbl_status = tk.Label(root, text="Chưa kết nối", fg="red")
-lbl_status.pack(pady=5)
+frame_current = tk.LabelFrame(root, text="Thiết lập dòng điện", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
+frame_current.pack(pady=5, padx=10, fill="x")
+tk.Label(frame_current, text="Dòng điện (A):", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
+entry_current = tk.Entry(frame_current, width=10, justify="center", bg="#f0fff0")
+entry_current.pack(side="left", padx=5)
 
-lbl_output = tk.Label(root, text="⚡ Output chưa xác định", fg="blue", font=("Arial", 12))
-lbl_output.pack(pady=5)
+frame_status = tk.LabelFrame(root, text="📌 Trạng thái", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=10, pady=10)
+frame_status.pack(pady=10, fill="x", padx=20)
 
-lbl_voltage = tk.Label(root, text=f"⚡ Điện áp: --", font=("Arial", 14))
-lbl_voltage.pack(pady=10)
+lbl_status = tk.Label(frame_status, text="Chưa kết nối", fg="red", bg="#ffffff", font=("Arial", 11, "bold"))
+lbl_status.grid(row=0, column=0, sticky="w", pady=3)
+lbl_output = tk.Label(frame_status, text="⚡ Output chưa xác định", fg="blue", bg="#ffffff", font=("Arial", 12, "bold"))
+lbl_output.grid(row=1, column=0, sticky="w", pady=3)
+lbl_voltage = tk.Label(frame_status, text="⚡ Điện áp: --", fg="#000000", bg="#ffffff", font=("Arial", 14, "bold"))
+lbl_voltage.grid(row=2, column=0, sticky="w", pady=3)
 
-# --- Chọn mode ---
-frame_mode = tk.LabelFrame(root, text="Chọn Mode")
-frame_mode.pack(pady=5)
+# Horizontal frame chứa mode và bảo vệ
+frame_horiz = tk.Frame(root, bg="#f0f7ff")
+frame_horiz.pack(pady=5)
 
-mode_var = tk.IntVar(value=1)  # mặc định Mode 1
+frame_mode = tk.LabelFrame(frame_horiz, text="Chọn Mode", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
+frame_mode.pack(side="left", padx=10)
+mode_var = tk.IntVar(value=1)
 
 def on_mode_change():
     global mode_selected
     mode_selected = mode_var.get()
-    apply_mode()  # áp dụng ngay
-    # highlight không cần vì radiobutton đã tự thể hiện, nhưng nếu muốn đổi màu có thể chỉnh thủ công
+    apply_mode()
 
-# Radio button cho Mode 1
-rb_mode1 = tk.Radiobutton(frame_mode, text="Mode 1: List mặc định",
-                          variable=mode_var, value=1,
-                          indicatoron=True, width=25,
-                          command=on_mode_change)
+rb_mode1 = tk.Radiobutton(frame_mode, text="Mode 1: List mặc định", variable=mode_var, value=1,
+                          bg="#ffffff", activebackground="#e6f2ff", command=on_mode_change)
 rb_mode1.pack(pady=5)
-
-# Radio button cho Mode 2
-rb_mode2 = tk.Radiobutton(frame_mode, text="Mode 2: Nhập thủ công",
-                          variable=mode_var, value=2,
-                          indicatoron=True, width=25,
-                          command=on_mode_change)
+rb_mode2 = tk.Radiobutton(frame_mode, text="Mode 2: Nhập thủ công", variable=mode_var, value=2,
+                          bg="#ffffff", activebackground="#e6f2ff", command=on_mode_change)
 rb_mode2.pack(pady=5)
-
-entry_custom_voltage = tk.Entry(frame_mode)
+entry_custom_voltage = tk.Entry(frame_mode, bg="#f0fff0")
 entry_custom_voltage.pack(pady=3)
 
-# Áp dụng ngay khi nhấn Enter trong ô nhập điện áp
 def on_custom_voltage_enter(event=None):
     if mode_selected == 2 and ser and ser.is_open:
         try:
@@ -454,18 +531,42 @@ def on_custom_voltage_enter(event=None):
             set_voltage(val)
         except:
             messagebox.showerror("Lỗi", "Điện áp nhập không hợp lệ!")
-
 entry_custom_voltage.bind("<Return>", on_custom_voltage_enter)
 
+# --- OVP/OCP ngang với Mode ---
+frame_protection = tk.LabelFrame(frame_horiz, text="Bảo vệ OVP / OCP")
+frame_protection.pack(side="left", padx=10)   # đặt bên phải, cùng hàng
+
+# OVP
+tk.Label(frame_protection, text="OVP (V):").grid(row=0, column=0, padx=5, pady=2)
+entry_ovp = tk.Entry(frame_protection, width=8, justify="center")
+entry_ovp.grid(row=0, column=1, padx=5, pady=2)
+btn_ovp_on = tk.Button(frame_protection, text="OVP ON", width=8, command=lambda: set_ovp(True))
+btn_ovp_on.grid(row=0, column=2, padx=5, pady=2)
+
+btn_ovp_off = tk.Button(frame_protection, text="OVP OFF", width=8, command=lambda: set_ovp(False))
+btn_ovp_off.grid(row=0, column=3, padx=5, pady=2)
+
+# OCP
+tk.Label(frame_protection, text="OCP (A):").grid(row=1, column=0, padx=5, pady=2)
+entry_ocp = tk.Entry(frame_protection, width=8, justify="center")
+entry_ocp.grid(row=1, column=1, padx=5, pady=2)
+btn_ocp_on = tk.Button(frame_protection, text="OCP ON", width=8, command=lambda: set_ocp(True))
+btn_ocp_on.grid(row=1, column=2, padx=5, pady=2)
+
+btn_ocp_off = tk.Button(frame_protection, text="OCP OFF", width=8, command=lambda: set_ocp(False))
+btn_ocp_off.grid(row=1, column=3, padx=5, pady=2)
+
+
 # --- Khối chọn số ô và ô nhập điện áp ---
-frame_num_boxes = tk.Frame(root)
+frame_num_boxes = tk.Frame(root, bg="#f0f7ff")
 frame_num_boxes.pack(pady=5)
-tk.Label(frame_num_boxes, text="🔢 Số ô điện áp:").pack(side="left", padx=5)
+tk.Label(frame_num_boxes, text="🔢 Số ô điện áp:", bg="#f0f7ff", fg="#003366").pack(side="left", padx=5)
 combo_num_boxes = ttk.Combobox(frame_num_boxes, width=5, values=[2,3,4,5,6,7,8,9,10])
 combo_num_boxes.set(NUM_VOLTAGE_BOXES)
 combo_num_boxes.pack(side="left", padx=5)
 
-frame_mode1_boxes = tk.LabelFrame(root, text="Danh sách điện áp (Mode 1)")
+frame_mode1_boxes = tk.LabelFrame(root, text="Danh sách điện áp (Mode 1)", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
 frame_mode1_boxes.pack(pady=5)
 
 # --- Xử lý sự kiện khi nhấn Enter trong ô nhập điện áp ---
@@ -511,30 +612,20 @@ build_voltage_entries(NUM_VOLTAGE_BOXES)
 # highlight_mode()
 
 # --- Nút điều chỉnh ---
-frame_btn = tk.Frame(root)
+frame_btn = tk.Frame(root, bg="#f0f7ff")
 frame_btn.pack(pady=10)
-
-tk.Button(frame_btn, text="⬆ Tăng", width=10, command=increase_voltage).grid(row=0, column=1, padx=5, pady=5)
-tk.Button(frame_btn, text="⬇ Giảm", width=10, command=decrease_voltage).grid(row=2, column=1, padx=5, pady=5)
-tk.Button(frame_btn, text="◀ Bước-", width=10, command=step_prev).grid(row=1, column=0, padx=5, pady=5)
-lbl_step = tk.Label(
-    frame_btn,
-    text=f"Bước: {voltage_step}",
-    width=12,
-    bg="#ffffcc",        # màu nền vàng nhạt để highlight
-    relief="solid",      # kiểu viền: solid
-    bd=1.2,                # độ dày viền
-    font=("Arial", 12)
-)
+tk.Button(frame_btn, text="⬆ Tăng", width=10, bg="#cce6ff", command=increase_voltage).grid(row=0, column=1, padx=5, pady=5)
+tk.Button(frame_btn, text="⬇ Giảm", width=10, bg="#cce6ff", command=decrease_voltage).grid(row=2, column=1, padx=5, pady=5)
+tk.Button(frame_btn, text="◀ Bước-", width=10, bg="#cce6ff", command=step_prev).grid(row=1, column=0, padx=5, pady=5)
+lbl_step = tk.Label(frame_btn, text=f"Bước: {voltage_step}", width=12, bg="#ffffcc", relief="solid",
+                    bd=1.2, font=("Arial", 12))
 lbl_step.grid(row=1, column=1, padx=5, pady=5)
-tk.Button(frame_btn, text="▶ Bước+", width=10, command=step_next).grid(row=1, column=2, padx=5, pady=5)
+tk.Button(frame_btn, text="▶ Bước+", width=10, bg="#cce6ff", command=step_next).grid(row=1, column=2, padx=5, pady=5)
 
-tk.Button(root, text="⏩ Điện áp kế tiếp", width=20, command=next_voltage).pack(pady=5)
-tk.Button(root, text="🔄 Reset Mode", width=20, command=reset_mode).pack(pady=5)
-# ==== NÚT CHECK UPDATE ====
-tk.Button(root, text="🔄 Check for update", width=20, command=check_update).pack(pady=5)
-# ==== END NÚT CHECK UPDATE ====
-tk.Button(root, text="❌ Thoát", width=20, command=quit_app).pack(pady=5)
+tk.Button(root, text="⏩ Điện áp kế tiếp", width=20, bg="#e6e6fa", command=next_voltage).pack(pady=5)
+tk.Button(root, text="🔄 Reset Mode", width=20, bg="#e6e6fa", command=reset_mode).pack(pady=5)
+tk.Button(root, text="🔄 Check for update", width=20, bg="#e6ffe6", command=check_update).pack(pady=5)
+tk.Button(root, text="❌ Thoát", width=20, bg="#ffcccc", command=quit_app).pack(pady=5)
 
 cfg = load_config()
 if "com_port" in cfg:
