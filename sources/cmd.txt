@@ -1,0 +1,1 @@
+cmd to build: pyinstaller --onefile --windowed --icon=myicon.ico gui_control.py
