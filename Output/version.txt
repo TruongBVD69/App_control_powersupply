@@ -1,3 +1,3 @@
 AppName: My GPP-3323 Controller
-Version: v1.0.5
-BuildTime: Mon 07/21/2025 17:09:00.15
+Version: v1.0.9
+BuildTime: Mon 07/21/2025 22:05:55.63

@@ -1,31 +1,32 @@
 @echo off
 REM ================================
-REM Cấu hình thư mục và file
+REM Configuration for building Python application
+REM This script uses PyInstaller to create a standalone executable
 REM ================================
 set SOURCE_DIR=sources
 set ASSETS_DIR=assets
 set MAIN_PY=%SOURCE_DIR%\main.py
 set ICON_PATH=%ASSETS_DIR%\myicon.ico
 set OUTPUT_DIR=Output
+set APP_NAME=My GPP-3323 Controller
 
 REM ================================
-REM Xoá thư mục build cũ
+REM Delete old build directories if they exist
 REM ================================
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 if exist __pycache__ rmdir /s /q __pycache__
 
 REM ================================
-REM Nhập phiên bản mới để build
+REM Prompt for application version
+REM This will be used in the version.txt file
 REM ================================
-set /p APP_VERSION=Nhập số phiên bản (vd: 1.0.3): 
+set /p APP_VERSION=Enter the application version (e.g., 1.0.0): 
 
 REM ================================
-REM Tạo thư mục Output nếu chưa có
+REM Create output directory if it doesn't exist
 REM ================================
 if not exist %OUTPUT_DIR% mkdir %OUTPUT_DIR%
-
-set APP_NAME=My GPP-3323 Controller
 
 (
     echo AppName: %APP_NAME%
@@ -34,26 +35,65 @@ set APP_NAME=My GPP-3323 Controller
 ) > %OUTPUT_DIR%\version.txt
 
 echo --------------------------------------------
-echo Đã tạo file version.txt tại %OUTPUT_DIR%\version.txt với version v%APP_VERSION%
+echo Created version.txt file at %OUTPUT_DIR%\version.txt with version v%APP_VERSION%
 echo --------------------------------------------
 
 REM ================================
-REM Build ứng dụng Python
+REM Check and install required Python modules
 REM ================================
+echo Checking required Python modules...
+
+call :CheckAndInstallModule pyserial serial
+call :CheckAndInstallModule requests
+call :CheckAndInstallModule PyInstaller
+REM You can add more modules as needed
+REM call :CheckAndInstallModule requests
+REM call :CheckAndInstallModule some_other_module
+
+goto BuildApp
+
+:CheckAndInstallModule
+    set MODULE_NAME=%1
+    set IMPORT_NAME=%2
+    if "%IMPORT_NAME%"=="" set IMPORT_NAME=%MODULE_NAME%
+
+    echo.
+    echo Checking module "%MODULE_NAME%"...
+    python -c "import %IMPORT_NAME%" 2>nul
+    if %ERRORLEVEL% NEQ 0 (
+        echo Module "%MODULE_NAME%" not found. Installing...
+        python -m pip install %MODULE_NAME%
+        if %ERRORLEVEL% NEQ 0 (
+            echo Failed to install %MODULE_NAME%! Please install manually and try again.
+            pause
+            exit /b 1
+        ) else (
+            echo Successfully installed %MODULE_NAME%.
+        )
+    ) else (
+        echo Module "%MODULE_NAME%" is already installed.
+    )
+    exit /b 0
+
+REM ================================
+REM Build the application
+REM ================================
+:BuildApp
 echo ============================================
-echo   Bắt đầu build ứng dụng Python bằng PyInstaller
+echo Start building Python application using PyInstaller
 echo ============================================
 
-pyinstaller --onefile --windowed --icon=%ICON_PATH% %MAIN_PY%
+python -m PyInstaller --onefile --windowed --icon=%ICON_PATH% %MAIN_PY%
 
 if %ERRORLEVEL%==0 (
     echo --------------------------------------------
-    echo Build thành công! File exe nằm trong thư mục dist
+    echo Build successful! Executable created in the dist directory.
     echo --------------------------------------------
 ) else (
     echo --------------------------------------------
-    echo Build thất bại! Kiểm tra lại lỗi trên console
+    echo Build failed! Please check the error messages above.
     echo --------------------------------------------
 )
 
 pause
+exit /b 0

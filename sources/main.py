@@ -165,13 +165,13 @@ def decrease_voltage():
 def choose_mode_1():
     global mode_selected
     mode_selected = 1
-    highlight_mode()
+    # highlight_mode()
     apply_mode()
 
 def choose_mode_2():
     global mode_selected
     mode_selected = 2
-    highlight_mode()
+    # highlight_mode()
     apply_mode()
 
 def get_entry_voltages():
@@ -332,10 +332,9 @@ def download_and_replace(download_url):
         filename = download_url.split('/')[-1]
 
         # Thư mục Downloads
-        user = getpass.getuser()
-        download_folder = os.path.join("C:\\Users", user, "Downloads")
+        download_folder = tempfile.gettempdir()
         if not os.path.exists(download_folder):
-            download_folder = os.getcwd()
+            download_folder = os.getcwd()  # fallback
 
         save_path = os.path.join(download_folder, filename)
         if os.path.exists(save_path):
@@ -354,7 +353,7 @@ def download_and_replace(download_url):
         batch_path = os.path.join(temp_dir, "update_script.bat")
 
         # 👉 Sửa đường dẫn này theo đường dẫn cài đặt hiện tại của bạn
-        uninstall_exe = r'"C:\Program Files\MyGPPController\unins000.exe" /VERYSILENT'
+        uninstall_exe = r'"C:\Program Files (x86)\MyGPPController\unins000.exe"'
 
         with open(batch_path, 'w', encoding='utf-8') as bat:
             bat.write("@echo off\n")
