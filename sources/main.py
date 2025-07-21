@@ -9,10 +9,12 @@ import requests
 import sys
 import webbrowser   # 👈 để mở link tải trên trình duyệt
 import getpass
+import subprocess
+import tempfile
 
 # ======================= BIẾN TOÀN CỤC =======================
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/TruongBVD69/App_control_powersupply/releases/latest"
-CURRENT_VERSION = "v1.0.0"
+CURRENT_VERSION = "v1.0.3"
 
 ser = None
 current_voltage = 0.0
@@ -31,6 +33,33 @@ NUM_VOLTAGE_BOXES = 4
 entry_volt_boxes = []
 
 device_type = "GPP"  # GPP hoặc Keysight
+
+# ======================= HÀM ĐỌC VERSION TỪ FILE =======================
+def get_app_info():
+    try:
+        base_dir = os.path.dirname(sys.argv[0])
+        version_file = os.path.join(base_dir, "version.txt")
+        info = {"AppName": "", "Version": "", "BuildTime": ""}
+        with open(version_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if ":" in line:
+                    key, value = line.split(":", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if key in info:
+                        info[key] = value
+        return info
+    except Exception as e:
+        print("Lỗi đọc version.txt:", e)
+        return {"AppName": "Unknown", "Version": "Unknown", "BuildTime": "Unknown"}
+
+def refresh_version_info():
+    global CURRENT_VERSION, app_info
+    app_info = get_app_info()
+    CURRENT_VERSION = app_info["Version"]
+    root.title(f"{app_info['AppName']} - {CURRENT_VERSION}")
+    # Nếu bạn có label version thì cập nhật ở đây luôn
+    # ví dụ: lbl_version.config(text=f"Version: {CURRENT_VERSION}")
 
 # ======================= HÀM GỬI LỆNH =======================
 def send_cmd(cmd):
@@ -272,7 +301,6 @@ def check_update():
             data = resp.json()
             latest_version = data['tag_name']
             if latest_version > CURRENT_VERSION:
-                # Lấy link file đầu tiên trong release
                 assets = data.get('assets', [])
                 if assets:
                     download_url = assets[0]['browser_download_url']
@@ -280,7 +308,7 @@ def check_update():
                         "Cập nhật mới",
                         f"Đã có bản mới: {latest_version}\n"
                         f"Bạn đang dùng: {CURRENT_VERSION}\n\n"
-                        "Bạn có muốn mở link tải không?"
+                        "Bạn có muốn cập nhật ngay không?"
                     )
                     if answer:
                         download_and_replace(download_url)
@@ -298,43 +326,58 @@ def check_update():
             messagebox.showerror("Lỗi", f"Lỗi kết nối GitHub: {resp.status_code}")
     except Exception as e:
         messagebox.showerror("Lỗi", f"Không kiểm tra được update:\n{e}")
-# ==== END CHECK UPDATE ====
 
 def download_and_replace(download_url):
     try:
         filename = download_url.split('/')[-1]
-        # Lấy thư mục Downloads của user
+
+        # Thư mục Downloads
         user = getpass.getuser()
         download_folder = os.path.join("C:\\Users", user, "Downloads")
         if not os.path.exists(download_folder):
-            download_folder = os.getcwd()  # fallback về thư mục hiện tại
-        save_path = os.path.join(download_folder, filename)
+            download_folder = os.getcwd()
 
-        # Nếu file đã tồn tại thì thêm hậu tố
+        save_path = os.path.join(download_folder, filename)
         if os.path.exists(save_path):
             base, ext = os.path.splitext(save_path)
             save_path = base + "_new" + ext
 
-        # Tải file mới
+        # Tải file
         r = requests.get(download_url, stream=True)
         r.raise_for_status()
         with open(save_path, 'wb') as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
 
-        messagebox.showinfo(
-            "Tải xong",
-            f"Đã tải file mới về:\n{save_path}\n\nHãy đóng app hiện tại và chạy file mới."
-        )
-        # Tự mở file mới nếu muốn:
-        os.startfile(save_path)
+        # Tạo file batch cập nhật
+        temp_dir = tempfile.gettempdir()
+        batch_path = os.path.join(temp_dir, "update_script.bat")
+
+        # 👉 Sửa đường dẫn này theo đường dẫn cài đặt hiện tại của bạn
+        uninstall_exe = r'"C:\Program Files\MyGPPController\unins000.exe" /VERYSILENT'
+
+        with open(batch_path, 'w', encoding='utf-8') as bat:
+            bat.write("@echo off\n")
+            bat.write("echo [Updater] Đang cập nhật...\n")
+            bat.write("timeout /t 2 /nobreak >nul\n")
+            bat.write(f"{uninstall_exe}\n")
+            bat.write("timeout /t 2 /nobreak >nul\n")
+            bat.write(f'start "" "{save_path}"\n')
+            bat.write('(goto) 2>nul & del "%~f0"\n')
+
+        # Chạy batch và đóng app
+        subprocess.Popen(batch_path, shell=True)
+        messagebox.showinfo("Đang cập nhật", "Ứng dụng sẽ đóng và bản mới sẽ được cài đặt.")
+        root.destroy()
 
     except Exception as e:
         messagebox.showerror("Lỗi tải", f"Không tải được file mới:\n{e}")
+# ==== END CHECK UPDATE ====
 
 # ======================= GIAO DIỆN =======================
 root = tk.Tk()
-root.title("Điều khiển GPP-3323")
+
+refresh_version_info()  # Cập nhật tiêu đề và version khi khởi tạo cửa sổ
 
 # root.geometry("650x750")
 root.resizable(False, True)
