@@ -83,7 +83,7 @@ echo ============================================
 echo Start building Python application using PyInstaller
 echo ============================================
 
-python -m PyInstaller --onefile --windowed --icon=%ICON_PATH% %MAIN_PY%
+python -m PyInstaller --noconfirm --onedir --windowed --icon=%ICON_PATH% %MAIN_PY%
 
 if %ERRORLEVEL%==0 (
     echo --------------------------------------------

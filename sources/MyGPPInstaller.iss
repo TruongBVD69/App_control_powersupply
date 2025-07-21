@@ -18,7 +18,7 @@ SetupIconFile={#SourcePath}..\assets\myicon.ico
 ; copy driver vào thư mục tạm thời của installer
 Source: "{#SourcePath}..\GPP_1_0_0_3_driverSetup\driverSetup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 ; copy app chính (đổi tên file exe nếu cần)
-Source: "{#SourcePath}..\dist\main.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}..\dist\main\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; copy file version.txt vào thư mục cài đặt
 Source: "{#SourcePath}..\Output\version.txt"; DestDir: "{app}"; Flags: ignoreversion
 
