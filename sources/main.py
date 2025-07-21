@@ -8,6 +8,7 @@ import os
 import requests
 import sys
 import webbrowser   # 👈 để mở link tải trên trình duyệt
+import getpass
 
 # ======================= BIẾN TOÀN CỤC =======================
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/TruongBVD69/App_control_powersupply/releases/latest"
@@ -302,15 +303,32 @@ def check_update():
 def download_and_replace(download_url):
     try:
         filename = download_url.split('/')[-1]
+        # Lấy thư mục Downloads của user
+        user = getpass.getuser()
+        download_folder = os.path.join("C:\\Users", user, "Downloads")
+        if not os.path.exists(download_folder):
+            download_folder = os.getcwd()  # fallback về thư mục hiện tại
+        save_path = os.path.join(download_folder, filename)
+
+        # Nếu file đã tồn tại thì thêm hậu tố
+        if os.path.exists(save_path):
+            base, ext = os.path.splitext(save_path)
+            save_path = base + "_new" + ext
+
         # Tải file mới
         r = requests.get(download_url, stream=True)
-        with open(filename, 'wb') as f:
+        r.raise_for_status()
+        with open(save_path, 'wb') as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
-        messagebox.showinfo("Tải xong", f"Đã tải file {filename}.\nHãy đóng app và chạy file mới.")
-        # Nếu muốn tự mở file mới:
-        # os.startfile(filename)
-        # root.quit()
+
+        messagebox.showinfo(
+            "Tải xong",
+            f"Đã tải file mới về:\n{save_path}\n\nHãy đóng app hiện tại và chạy file mới."
+        )
+        # Tự mở file mới nếu muốn:
+        os.startfile(save_path)
+
     except Exception as e:
         messagebox.showerror("Lỗi tải", f"Không tải được file mới:\n{e}")
 
