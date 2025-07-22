@@ -132,13 +132,14 @@ def set_ovp(enable: bool):
             return
         try:
             v = float(val)
+            # print(f"Setting OVP to {v}V for {device_type}")
             if device_type == "GPP":
-                send_cmd(f'OVP {v}')
-                send_cmd('OVP ON')
+                send_cmd(f'OUTP1:OVP {v}')
+                send_cmd('OUTP1:OVP:STAT ON')
             elif device_type == "KEYSIGHT":
-                send_cmd(f"VOLT:PROT {v}")
-                send_cmd("VOLT:PROT:STATE ON")
-            messagebox.showinfo("Thành công", f"Bật OVP = {v}V")
+                send_cmd(f'VOLT:PROT {v}')
+                send_cmd('VOLT:PROT:STAT ON')
+            # messagebox.showinfo("Thành công", f"Bật OVP = {v}V")
             btn_ovp_on.config(bg="lightgreen")
             btn_ovp_off.config(bg="SystemButtonFace")
         except:
@@ -146,10 +147,10 @@ def set_ovp(enable: bool):
     else:
         # OFF
         if device_type == "GPP":
-            send_cmd('OVP OFF')
+            send_cmd('OUTP1:OVP:STAT OFF')
         elif device_type == "KEYSIGHT":
-            send_cmd("VOLT:PROT:STATE OFF")
-        messagebox.showinfo("Thành công", "Đã tắt OVP")
+            send_cmd('VOLT:PROT:STAT OFF')
+        # messagebox.showinfo("Thành công", "Đã tắt OVP")
         btn_ovp_on.config(bg="SystemButtonFace")
         btn_ovp_off.config(bg="red")
 
@@ -165,12 +166,9 @@ def set_ocp(enable: bool):
         try:
             c = float(val)
             if device_type == "GPP":
-                send_cmd(f'OCP {c}')
-                send_cmd('OCP ON')
-            elif device_type == "KEYSIGHT":
-                send_cmd(f"CURR:PROT {c}")
-                send_cmd("CURR:PROT:STATE ON")
-            messagebox.showinfo("Thành công", f"Bật OCP = {c}A")
+                send_cmd(f'OUTP1:OCP {c}')
+                send_cmd('OUTP1:OCP:STAT ON')
+            # messagebox.showinfo("Thành công", f"Bật OCP = {c}A")
             btn_ocp_on.config(bg="lightgreen")
             btn_ocp_off.config(bg="SystemButtonFace")
         except:
@@ -178,10 +176,8 @@ def set_ocp(enable: bool):
     else:
         # OFF
         if device_type == "GPP":
-            send_cmd('OCP OFF')
-        elif device_type == "KEYSIGHT":
-            send_cmd("CURR:PROT:STATE OFF")
-        messagebox.showinfo("Thành công", "Đã tắt OCP")
+            send_cmd('OUTP1:OCP:STAT OFF')
+        # messagebox.showinfo("Thành công", "Đã tắt OCP")
         btn_ocp_on.config(bg="SystemButtonFace")
         btn_ocp_off.config(bg="red")
 
@@ -373,6 +369,67 @@ def disconnect_com():
     else:
         lbl_status.config(text="⚠ Chưa có kết nối để ngắt", fg="red")
 
+# --- Xử lý sự kiện khi nhấn Enter trong ô nhập điện áp ---
+def on_voltage_entry_return(event):
+    # chỉ xử lý khi đang ở mode 1 và đã kết nối
+    if mode_selected == 1 and ser and ser.is_open:
+        try:
+            new_val = float(event.widget.get())
+            set_voltage(new_val)
+        except ValueError:
+            messagebox.showerror("Lỗi", "Giá trị điện áp không hợp lệ!")
+
+def build_voltage_entries(n):
+    global entry_volt_boxes, NUM_VOLTAGE_BOXES
+    for w in entry_volt_boxes:
+        w.destroy()
+    entry_volt_boxes.clear()
+    NUM_VOLTAGE_BOXES = n
+    for i in range(NUM_VOLTAGE_BOXES):
+        e = tk.Entry(frame_mode1_boxes, width=10, justify="center")
+        if i < len(voltages):
+            e.insert(0, str(voltages[i]))
+        else:
+            e.insert(0, "")
+        e.pack(pady=2)
+        e.bind("<Return>", on_voltage_entry_return)  # 👈 Bắt sự kiện Enter
+        entry_volt_boxes.append(e)
+    
+    # Sau khi thêm xong các entry mới, cập nhật lại cửa sổ:
+    root.update()        # cập nhật GUI
+    root.geometry("")    # reset geometry, để Tkinter tự tính lại kích thước window
+
+def on_num_boxes_change(event=None):
+    try:
+        n = int(combo_num_boxes.get())
+        build_voltage_entries(n)
+    except:
+        pass
+
+def on_mode_change():
+    global mode_selected
+    mode_selected = mode_var.get()
+    apply_mode()
+
+def on_custom_voltage_enter(event=None):
+    if mode_selected == 2 and ser and ser.is_open:
+        try:
+            val = float(entry_custom_voltage.get().strip())
+            set_voltage(val)
+        except:
+            messagebox.showerror("Lỗi", "Điện áp nhập không hợp lệ!")
+
+def on_current_enter(event=None):
+    if ser and ser.is_open:
+        try:
+            val_cur = float(entry_current.get().strip())
+            send_cmd(f'CURR {val_cur}')
+            # messagebox.showinfo("Thông báo", f"Đã đặt dòng điện: {curr_val} A")
+        except ValueError:
+            messagebox.showerror("Lỗi", "Giá trị dòng điện không hợp lệ!")
+    else:
+        messagebox.showerror("Lỗi", "Chưa kết nối thiết bị!")
+
 # ==== CHECK UPDATE ====
 def check_update():
     try:
@@ -491,6 +548,8 @@ frame_current.pack(pady=5, padx=10, fill="x")
 tk.Label(frame_current, text="Dòng điện (A):", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
 entry_current = tk.Entry(frame_current, width=10, justify="center", bg="#f0fff0")
 entry_current.pack(side="left", padx=5)
+entry_current.bind("<Return>", on_current_enter)  # Bắt sự kiện Enter
+entry_current.insert(0, "0.3")  # giá trị mặc định
 
 frame_status = tk.LabelFrame(root, text="📌 Trạng thái", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=10, pady=10)
 frame_status.pack(pady=10, fill="x", padx=20)
@@ -510,11 +569,6 @@ frame_mode = tk.LabelFrame(frame_horiz, text="Chọn Mode", bg="#ffffff", fg="#0
 frame_mode.pack(side="left", padx=10)
 mode_var = tk.IntVar(value=1)
 
-def on_mode_change():
-    global mode_selected
-    mode_selected = mode_var.get()
-    apply_mode()
-
 rb_mode1 = tk.Radiobutton(frame_mode, text="Mode 1: List mặc định", variable=mode_var, value=1,
                           bg="#ffffff", activebackground="#e6f2ff", command=on_mode_change)
 rb_mode1.pack(pady=5)
@@ -523,14 +577,6 @@ rb_mode2 = tk.Radiobutton(frame_mode, text="Mode 2: Nhập thủ công", variabl
 rb_mode2.pack(pady=5)
 entry_custom_voltage = tk.Entry(frame_mode, bg="#f0fff0")
 entry_custom_voltage.pack(pady=3)
-
-def on_custom_voltage_enter(event=None):
-    if mode_selected == 2 and ser and ser.is_open:
-        try:
-            val = float(entry_custom_voltage.get().strip())
-            set_voltage(val)
-        except:
-            messagebox.showerror("Lỗi", "Điện áp nhập không hợp lệ!")
 entry_custom_voltage.bind("<Return>", on_custom_voltage_enter)
 
 # --- OVP/OCP ngang với Mode ---
@@ -568,43 +614,6 @@ combo_num_boxes.pack(side="left", padx=5)
 
 frame_mode1_boxes = tk.LabelFrame(root, text="Danh sách điện áp (Mode 1)", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
 frame_mode1_boxes.pack(pady=5)
-
-# --- Xử lý sự kiện khi nhấn Enter trong ô nhập điện áp ---
-def on_voltage_entry_return(event):
-    # chỉ xử lý khi đang ở mode 1 và đã kết nối
-    if mode_selected == 1 and ser and ser.is_open:
-        try:
-            new_val = float(event.widget.get())
-            set_voltage(new_val)
-        except ValueError:
-            messagebox.showerror("Lỗi", "Giá trị điện áp không hợp lệ!")
-
-def build_voltage_entries(n):
-    global entry_volt_boxes, NUM_VOLTAGE_BOXES
-    for w in entry_volt_boxes:
-        w.destroy()
-    entry_volt_boxes.clear()
-    NUM_VOLTAGE_BOXES = n
-    for i in range(NUM_VOLTAGE_BOXES):
-        e = tk.Entry(frame_mode1_boxes, width=10, justify="center")
-        if i < len(voltages):
-            e.insert(0, str(voltages[i]))
-        else:
-            e.insert(0, "")
-        e.pack(pady=2)
-        e.bind("<Return>", on_voltage_entry_return)  # 👈 Bắt sự kiện Enter
-        entry_volt_boxes.append(e)
-    
-    # Sau khi thêm xong các entry mới, cập nhật lại cửa sổ:
-    root.update()        # cập nhật GUI
-    root.geometry("")    # reset geometry, để Tkinter tự tính lại kích thước window
-
-def on_num_boxes_change(event=None):
-    try:
-        n = int(combo_num_boxes.get())
-        build_voltage_entries(n)
-    except:
-        pass
 
 combo_num_boxes.bind("<<ComboboxSelected>>", on_num_boxes_change)
 build_voltage_entries(NUM_VOLTAGE_BOXES)
