@@ -14,11 +14,12 @@ import tempfile
 
 # ======================= BIẾN TOÀN CỤC =======================
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/TruongBVD69/App_control_powersupply/releases/latest"
-CURRENT_VERSION = "v1.9"
+CURRENT_VERSION = "v1.9.1"
 
 ser = None
 current_voltage = 0.0
 index = 0
+is_reverse = False
 
 voltages = [1.815, 2.479, 3.117, 3.755]
 
@@ -189,9 +190,17 @@ def next_voltage():
     list_volt = get_entry_voltages()
     if not list_volt:
         return
-    index = (index + 1) % len(list_volt)
+
+    # Cập nhật hướng từ checkbox
+    is_reverse = reverse_var.get()
+
+    if is_reverse:
+        index = (index - 1) % len(list_volt)
+    else:
+        index = (index + 1) % len(list_volt)
+
     set_voltage(list_volt[index])
-    time.sleep(0.02)
+    time.sleep(0.01)
 
 def step_next():
     global step_index, voltage_step
@@ -687,6 +696,9 @@ lbl_step = tk.Label(frame_btn, text=f"Step: {voltage_step}", width=12,
 lbl_step.grid(row=1, column=1, padx=5, pady=5)
 
 tk.Button(frame_btn, text="▶ Step+", width=10, bg="#cce6ff", command=step_next).grid(row=1, column=2, padx=5, pady=5)
+
+reverse_var = tk.BooleanVar(value=False)
+tk.Checkbutton(frame_btn, text="🔁 Reverse direction", variable=reverse_var).grid(row=2, column=0, columnspan=3)
 
 tk.Button(frame_btn, text="⏩ Next voltage", width=20, bg="#e6e6fa", command=next_voltage)\
     .grid(row=3, column=0, columnspan=3, pady=5)
