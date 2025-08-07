@@ -14,7 +14,7 @@ import tempfile
 
 # ======================= BIẾN TOÀN CỤC =======================
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/TruongBVD69/App_control_powersupply/releases/latest"
-CURRENT_VERSION = "v1.0.3"
+CURRENT_VERSION = "v1.9"
 
 ser = None
 current_voltage = 0.0
@@ -387,19 +387,25 @@ def build_voltage_entries(n):
         w.destroy()
     entry_volt_boxes.clear()
     NUM_VOLTAGE_BOXES = n
+
+    max_per_col = 10  # số ô tối đa mỗi cột
     for i in range(NUM_VOLTAGE_BOXES):
+        col = i // max_per_col      # cột hiện tại
+        row = i % max_per_col       # hàng trong cột
+
         e = tk.Entry(frame_mode1_boxes, width=10, justify="center")
         if i < len(voltages):
             e.insert(0, str(voltages[i]))
         else:
             e.insert(0, "")
-        e.pack(pady=2)
-        e.bind("<Return>", on_voltage_entry_return)  # 👈 Bắt sự kiện Enter
+
+        e.grid(row=row, column=col, padx=5, pady=2)  # dùng grid thay cho pack
+        e.bind("<Return>", on_voltage_entry_return)  # bắt sự kiện Enter
         entry_volt_boxes.append(e)
-    
-    # Sau khi thêm xong các entry mới, cập nhật lại cửa sổ:
-    root.update()        # cập nhật GUI
-    root.geometry("")    # reset geometry, để Tkinter tự tính lại kích thước window
+
+    # Cập nhật GUI
+    root.update()
+    root.geometry("")
 
 def on_num_boxes_change(event=None):
     try:
@@ -654,13 +660,16 @@ frame_left.pack(side="left", padx=10, anchor="n")
 frame_num_boxes = tk.Frame(frame_left, bg="#ffffff")
 frame_num_boxes.pack(pady=(5, 0))
 tk.Label(frame_num_boxes, text="🔢 Number of boxes:", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
-combo_num_boxes = ttk.Combobox(frame_num_boxes, width=5, values=[2,3,4,5,6,7,8,9,10])
+combo_num_boxes = ttk.Combobox(frame_num_boxes, width=5, values=[2,3,4,5,6,7,8,9,10,18], state="normal")
 combo_num_boxes.set(NUM_VOLTAGE_BOXES)
 combo_num_boxes.pack(side="left", padx=5)
 
 frame_mode1_boxes = tk.Frame(frame_left, bg="#ffffff")
 frame_mode1_boxes.pack(pady=5)
+# Sự kiện khi chọn từ danh sách
 combo_num_boxes.bind("<<ComboboxSelected>>", on_num_boxes_change)
+# Sự kiện khi nhấn Enter để nhập số
+combo_num_boxes.bind("<Return>", lambda event: on_num_boxes_change(event))
 build_voltage_entries(NUM_VOLTAGE_BOXES)
 
 # Right: Voltage adjustment
