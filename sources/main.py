@@ -312,7 +312,7 @@ def toggle_auto_run():
 
 def save_config():
     config = {
-        "num_voltage_boxes": int(combo_num_boxes.get()),
+        "num_voltage_boxes": combo_num_boxes.get(),
         "voltages": get_entry_voltages(),
         "com_port": combo_com.get(),
         "device": combo_device.get(),
