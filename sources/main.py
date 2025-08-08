@@ -33,6 +33,8 @@ mode_selected = 1  # 1: list mặc định, 2: tự nhập
 NUM_VOLTAGE_BOXES = 4
 entry_volt_boxes = []
 
+auto_running = False
+
 device_type = "GPP"  # GPP hoặc Keysight
 
 # ======================= HÀM ĐỌC VERSION TỪ FILE =======================
@@ -271,6 +273,39 @@ def apply_mode():
             set_voltage(val)
         except:
             messagebox.showerror("Error", "Invalid custom voltage value!")
+
+def auto_run():
+    global auto_running
+    if not auto_running:
+        return  # Dừng thì thoát
+
+    try:
+        delay_sec = float(delay_entry.get()) or 5.0  # Lấy từ ô nhập, mặc định 5s nếu trống
+        delay_ms = int(delay_entry.get())
+        delay_ms = int(delay_sec * 1000)      # Chuyển sang ms
+    except ValueError:
+        messagebox.showwarning("Cảnh báo", "Vui lòng nhập thời gian delay (ms) hợp lệ!")
+        auto_running = False
+        btn_auto_run.config(text="▶ Auto Run", bg="#ffcccc")  # Màu đỏ khi dừng
+        return
+
+    next_voltage()  # Gọi hàm có sẵn
+    root.after(delay_ms, auto_run)  # Lặp lại
+
+def toggle_auto_run():
+    global auto_running
+    if not auto_running:
+        try:
+            delay_sec = float(delay_entry.get())
+        except ValueError:
+            messagebox.showwarning("Cảnh báo", "Vui lòng nhập thời gian delay (giây) hợp lệ!")
+            return
+        auto_running = True
+        btn_auto_run.config(text="⏹ Stop", bg="#ccffcc")  # Màu xanh khi chạy
+        auto_run()
+    else:
+        auto_running = False
+        btn_auto_run.config(text="▶ Auto Run", bg="#ffcccc")  # Màu đỏ khi dừng
 
 def reset_mode():
     output_off()
@@ -668,6 +703,19 @@ frame_left.pack(side="left", padx=10, anchor="n")
 
 frame_num_boxes = tk.Frame(frame_left, bg="#ffffff")
 frame_num_boxes.pack(pady=(5, 0))
+
+frame_auto_run = tk.Frame(frame_left, bg="#ffffff")
+frame_auto_run.pack(pady=5)
+
+tk.Label(frame_auto_run, text="Delay (s):").grid(row=7, column=0, pady=5)
+delay_entry = tk.Entry(frame_auto_run, width=8, justify="center")
+delay_entry.insert(0, "5")  # Mặc định 5 giây
+delay_entry.grid(row=7, column=1, pady=5)
+
+btn_auto_run = tk.Button(frame_auto_run, text="▶ Auto Run", width=15, bg="#ffcccc",
+                         command=toggle_auto_run)
+btn_auto_run.grid(row=8, column=0, columnspan=3, pady=5)
+          
 tk.Label(frame_num_boxes, text="🔢 Number of boxes:", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
 combo_num_boxes = ttk.Combobox(frame_num_boxes, width=5, values=[2,3,4,5,6,7,8,9,10,18], state="normal")
 combo_num_boxes.set(NUM_VOLTAGE_BOXES)
