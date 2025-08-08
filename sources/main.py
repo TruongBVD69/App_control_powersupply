@@ -251,6 +251,32 @@ def choose_mode_2():
     # highlight_mode()
     apply_mode()
 
+def build_voltage_entries(n):
+    global entry_volt_boxes, NUM_VOLTAGE_BOXES
+    for w in entry_volt_boxes:
+        w.destroy()
+    entry_volt_boxes.clear()
+    NUM_VOLTAGE_BOXES = n
+
+    max_per_col = 10  # số ô tối đa mỗi cột
+    for i in range(NUM_VOLTAGE_BOXES):
+        col = i // max_per_col      # cột hiện tại
+        row = i % max_per_col       # hàng trong cột
+
+        e = tk.Entry(frame_mode1_boxes, width=10, justify="center")
+        if i < len(voltages):
+            e.insert(0, str(voltages[i]))
+        else:
+            e.insert(0, "")
+
+        e.grid(row=row, column=col, padx=5, pady=2)  # dùng grid thay cho pack
+        e.bind("<Return>", on_voltage_entry_return)  # bắt sự kiện Enter
+        entry_volt_boxes.append(e)
+
+    # Cập nhật GUI
+    root.update()
+    root.geometry("")
+
 def get_entry_voltages():
     lst = []
     for e in entry_volt_boxes:
@@ -312,7 +338,7 @@ def toggle_auto_run():
 
 def save_config():
     config = {
-        "num_voltage_boxes": combo_num_boxes.get(),
+        "num_voltage_boxes": int(combo_num_boxes.get()),
         "voltages": get_entry_voltages(),
         "com_port": combo_com.get(),
         "device": combo_device.get(),
@@ -338,26 +364,24 @@ def load_config():
         return {}
 
 def apply_config_to_ui(config):
+    global voltages
+    if "voltages" in config:
+        voltages = config["voltages"]
+
     if "num_voltage_boxes" in config:
         try:
             n = int(config["num_voltage_boxes"])
             combo_num_boxes.set(str(n))
-            build_voltage_entries(n)
+            build_voltage_entries(n)  # build lúc này sẽ lấy giá trị từ voltages mới
         except Exception:
             pass
-
-    if "voltages" in config:
-        voltages_list = config["voltages"]
-        for i, val in enumerate(voltages_list):
-            if i < len(entry_volt_boxes):
-                entry_volt_boxes[i].delete(0, tk.END)
-                entry_volt_boxes[i].insert(0, str(val))
 
     if "com_port" in config:
         combo_com.set(config["com_port"])
 
     if "device" in config:
         combo_device.set(config["device"])
+        on_device_change(None)  # Gọi thủ công hàm xử lý khi device thay đổi
 
     if "baudrate" in config:
         combo_baud.set(config["baudrate"])
@@ -376,6 +400,7 @@ def apply_config_to_ui(config):
 
     if "reverse_order" in config and 'reverse_var' in globals():
         reverse_var.set(config["reverse_order"])
+
 
 def on_load_config():
     config = load_config()
@@ -466,7 +491,7 @@ def connect_com():
 
         ser = s
         lbl_status.config(text=f"✅ Connected to: {resp} @ {baud}bps", fg="green")
-        save_config(port)
+
         send_cmd('*CLS')
 
         # ✅ Gửi dòng điện ngay khi kết nối
@@ -499,32 +524,6 @@ def on_voltage_entry_return(event):
             set_voltage(new_val)
         except ValueError:
             messagebox.showerror("Error", "Invalid voltage value!")
-
-def build_voltage_entries(n):
-    global entry_volt_boxes, NUM_VOLTAGE_BOXES
-    for w in entry_volt_boxes:
-        w.destroy()
-    entry_volt_boxes.clear()
-    NUM_VOLTAGE_BOXES = n
-
-    max_per_col = 10  # số ô tối đa mỗi cột
-    for i in range(NUM_VOLTAGE_BOXES):
-        col = i // max_per_col      # cột hiện tại
-        row = i % max_per_col       # hàng trong cột
-
-        e = tk.Entry(frame_mode1_boxes, width=10, justify="center")
-        if i < len(voltages):
-            e.insert(0, str(voltages[i]))
-        else:
-            e.insert(0, "")
-
-        e.grid(row=row, column=col, padx=5, pady=2)  # dùng grid thay cho pack
-        e.bind("<Return>", on_voltage_entry_return)  # bắt sự kiện Enter
-        entry_volt_boxes.append(e)
-
-    # Cập nhật GUI
-    root.update()
-    root.geometry("")
 
 def on_num_boxes_change(event=None):
     try:
