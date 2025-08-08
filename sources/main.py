@@ -335,9 +335,9 @@ def load_config():
             config = json.load(f)
             return config
     except Exception:
-        return {}  # Trả về dict rỗng nếu lỗi hoặc không có file
+        return {}
 
-    # Gán giá trị từ config lên UI
+def apply_config_to_ui(config):
     if "num_voltage_boxes" in config:
         try:
             n = int(config["num_voltage_boxes"])
@@ -364,7 +364,7 @@ def load_config():
 
     if "mode" in config:
         mode_var.set(config["mode"])
-        on_mode_change()  # Cập nhật giao diện sau khi set mode
+        on_mode_change()
 
     if "ovp" in config:
         entry_ovp.delete(0, tk.END)
@@ -374,10 +374,13 @@ def load_config():
         entry_ocp.delete(0, tk.END)
         entry_ocp.insert(0, config["ocp"])
 
-    # Nếu reverse_var có tồn tại mới set (để tránh lỗi nếu chưa khai báo)
     if "reverse_order" in config and 'reverse_var' in globals():
         reverse_var.set(config["reverse_order"])
 
+def on_load_config():
+    config = load_config()
+    apply_config_to_ui(config)
+    messagebox.showinfo("Info", "Configuration loaded successfully.")
 
 def reset_mode():
     output_off()
@@ -672,6 +675,10 @@ combo_device.bind("<<ComboboxSelected>>", on_device_change)
 btn_save_config = tk.Button(frame_device, text="💾 Save Config", bg="#ccffcc", command=save_config)
 btn_save_config.pack(side="left", padx=10)
 
+# Nút Load Config
+btn_load_config = tk.Button(frame_device, text="📂 Load Config", bg="#cce6ff", command=on_load_config)
+btn_load_config.pack(side="left", padx=5)
+
 frame_com = tk.LabelFrame(root, text="COM Connection", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
 frame_com.pack(pady=5, padx=10, fill="x")
 combo_com = ttk.Combobox(frame_com, width=15)
@@ -833,10 +840,5 @@ tk.Button(frame_btn, text="❌ Exit", width=20, bg="#ffcccc", command=quit_app)\
     .grid(row=6, column=0, columnspan=3, pady=5)
 
 cfg = load_config()
-if "com_port" in cfg:
-    refresh_com_list()
-    ports = [p.device for p in serial.tools.list_ports.comports()]
-    if cfg["com_port"] in ports:
-        combo_com.set(cfg["com_port"])
 
 root.mainloop()
