@@ -1,6 +1,6 @@
 ; Script tạo installer cho My GPP-3323 Controller
 ; #define ProjectDir ExtractFileDir(__FILE__) + "\"
-#define MyAppVersion "1.9.3"
+#define MyAppVersion "1.9.4"
 #define MyAppName "My GPP-3323 Controller"
 
 [Setup]

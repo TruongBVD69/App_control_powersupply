@@ -27,7 +27,10 @@ step_options = [0.1, 0.01, 0.001]
 step_index = 1
 voltage_step = step_options[step_index]
 
-CONFIG_FILE = os.path.join(os.getenv('APPDATA'), 'MyGPPController_config.json')
+appdata_dir = os.getenv('APPDATA')
+config_dir = os.path.join(appdata_dir, 'MyGPPController')
+os.makedirs(config_dir, exist_ok=True)
+CONFIG_FILE = os.path.join(config_dir, 'config.json')
 mode_selected = 1  # 1: list mặc định, 2: tự nhập
 
 NUM_VOLTAGE_BOXES = 4
@@ -307,6 +310,75 @@ def toggle_auto_run():
         auto_running = False
         btn_auto_run.config(text="▶ Auto Run", bg="#ffcccc")  # Màu đỏ khi dừng
 
+def save_config():
+    config = {
+        "num_voltage_boxes": int(combo_num_boxes.get()),
+        "voltages": get_entry_voltages(),
+        "com_port": combo_com.get(),
+        "device": combo_device.get(),
+        "baudrate": combo_baud.get(),
+        "mode": mode_var.get(),
+        "ovp": entry_ovp.get(),
+        "ocp": entry_ocp.get(),
+        "reverse_order": reverse_var.get() if 'reverse_var' in globals() else False
+    }
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=4)
+        messagebox.showinfo("Info", "Configuration saved successfully.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to save config:\n{e}")
+
+def load_config():
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            config = json.load(f)
+            return config
+    except Exception:
+        return {}  # Trả về dict rỗng nếu lỗi hoặc không có file
+
+    # Gán giá trị từ config lên UI
+    if "num_voltage_boxes" in config:
+        try:
+            n = int(config["num_voltage_boxes"])
+            combo_num_boxes.set(str(n))
+            build_voltage_entries(n)
+        except Exception:
+            pass
+
+    if "voltages" in config:
+        voltages_list = config["voltages"]
+        for i, val in enumerate(voltages_list):
+            if i < len(entry_volt_boxes):
+                entry_volt_boxes[i].delete(0, tk.END)
+                entry_volt_boxes[i].insert(0, str(val))
+
+    if "com_port" in config:
+        combo_com.set(config["com_port"])
+
+    if "device" in config:
+        combo_device.set(config["device"])
+
+    if "baudrate" in config:
+        combo_baud.set(config["baudrate"])
+
+    if "mode" in config:
+        mode_var.set(config["mode"])
+        on_mode_change()  # Cập nhật giao diện sau khi set mode
+
+    if "ovp" in config:
+        entry_ovp.delete(0, tk.END)
+        entry_ovp.insert(0, config["ovp"])
+
+    if "ocp" in config:
+        entry_ocp.delete(0, tk.END)
+        entry_ocp.insert(0, config["ocp"])
+
+    # Nếu reverse_var có tồn tại mới set (để tránh lỗi nếu chưa khai báo)
+    if "reverse_order" in config and 'reverse_var' in globals():
+        reverse_var.set(config["reverse_order"])
+
+
 def reset_mode():
     output_off()
     output_on()
@@ -325,18 +397,18 @@ def refresh_com_list():
     if ports:
         combo_com.current(0)
 
-def save_config(port):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump({"com_port": port}, f)
+# def save_config(port):
+#     with open(CONFIG_FILE, 'w') as f:
+#         json.dump({"com_port": port}, f)
 
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+# def load_config():
+#     if os.path.exists(CONFIG_FILE):
+#         try:
+#             with open(CONFIG_FILE, 'r') as f:
+#                 return json.load(f)
+#         except:
+#             return {}
+#     return {}
 
 def on_device_change(event=None):
     global device_type
@@ -596,6 +668,9 @@ combo_device = ttk.Combobox(frame_device, width=20, values=["GPP-3323", "Keysigh
 combo_device.set("GPP-3323")
 combo_device.pack(side="left", padx=5)
 combo_device.bind("<<ComboboxSelected>>", on_device_change)
+# Nút Save Config ngay bên cạnh
+btn_save_config = tk.Button(frame_device, text="💾 Save Config", bg="#ccffcc", command=save_config)
+btn_save_config.pack(side="left", padx=10)
 
 frame_com = tk.LabelFrame(root, text="COM Connection", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
 frame_com.pack(pady=5, padx=10, fill="x")
