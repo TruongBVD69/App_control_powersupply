@@ -679,6 +679,13 @@ def download_and_replace(download_url, latest_version):
         messagebox.showerror("Error tải", f"Không tải được file mới:\n{e}")
 # ==== END CHECK UPDATE ====
 
+def open_installed_voice_app():
+    app_path = r"C:\Program Files (x86)\MyGPPController\voice_app.exe"
+    try:
+        os.startfile(app_path)
+    except Exception as e:
+        print(f"Không thể mở ứng dụng: {e}")
+
 # ======================= GIAO DIỆN =======================
 root = tk.Tk()
 root.configure(bg="#f0f7ff")  # màu nền tổng thể
@@ -701,6 +708,10 @@ btn_save_config.pack(side="left", padx=10)
 # Nút Load Config
 btn_load_config = tk.Button(frame_device, text="📂 Load Config", bg="#cce6ff", command=load_config)
 btn_load_config.pack(side="left", padx=5)
+
+# Nút open voice app
+btn_voice = tk.Button(frame_device, text="🔊 Voice", bg="#cce6ff", command=open_installed_voice_app)
+btn_voice.pack(side="left", padx=5)
 
 frame_com = tk.LabelFrame(root, text="COM Connection", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
 frame_com.pack(pady=5, padx=10, fill="x")

@@ -46,6 +46,9 @@ echo Checking required Python modules...
 call :CheckAndInstallModule pyserial serial
 call :CheckAndInstallModule requests
 call :CheckAndInstallModule PyInstaller
+call :CheckAndInstallModule pyaudio
+@REM call :CheckAndInstallModule SpeechRecognition
+@REM call :CheckAndInstallModule pywin32
 REM You can add more modules as needed
 REM call :CheckAndInstallModule requests
 REM call :CheckAndInstallModule some_other_module
@@ -62,7 +65,7 @@ goto BuildApp
     python -c "import %IMPORT_NAME%" 2>nul
     if %ERRORLEVEL% NEQ 0 (
         echo Module "%MODULE_NAME%" not found. Installing...
-        python -m pip install %MODULE_NAME%
+        pip install %MODULE_NAME%
         if %ERRORLEVEL% NEQ 0 (
             echo Failed to install %MODULE_NAME%! Please install manually and try again.
             pause
@@ -83,7 +86,11 @@ echo ============================================
 echo Start building Python application using PyInstaller
 echo ============================================
 
+REM Build main.py
 python -m PyInstaller --noconfirm --onedir --windowed --icon=%ICON_PATH% %MAIN_PY%
+
+REM Build voice_app.py (giữ icon hoặc đổi icon khác nếu cần)
+python -m PyInstaller --noconfirm --onedir --windowed  sources\voice_app.py
 
 if %ERRORLEVEL%==0 (
     echo --------------------------------------------
