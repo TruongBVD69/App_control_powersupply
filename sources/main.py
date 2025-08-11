@@ -11,6 +11,8 @@ import webbrowser   # 👈 để mở link tải trên trình duyệt
 import getpass
 import subprocess
 import tempfile
+from tkinter import simpledialog
+from tkinter import filedialog
 
 # ======================= BIẾN TOÀN CỤC =======================
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/TruongBVD69/App_control_powersupply/releases/latest"
@@ -31,6 +33,7 @@ appdata_dir = os.getenv('APPDATA')
 config_dir = os.path.join(appdata_dir, 'MyGPPController')
 os.makedirs(config_dir, exist_ok=True)
 CONFIG_FILE = os.path.join(config_dir, 'config.json')
+
 mode_selected = 1  # 1: list mặc định, 2: tự nhập
 
 NUM_VOLTAGE_BOXES = 4
@@ -337,6 +340,11 @@ def toggle_auto_run():
         btn_auto_run.config(text="▶ Auto Run", bg="#ffcccc")  # Màu đỏ khi dừng
 
 def save_config():
+    config_name = simpledialog.askstring("Save Config", "Enter config name:")
+    if not config_name:
+        return  # Hủy nếu không nhập
+
+    config_file = os.path.join(config_dir, f"{config_name}.json")
     config = {
         "num_voltage_boxes": int(combo_num_boxes.get()),
         "voltages": get_entry_voltages(),
@@ -348,20 +356,30 @@ def save_config():
         "ocp": entry_ocp.get(),
         "reverse_order": reverse_var.get() if 'reverse_var' in globals() else False
     }
+
     try:
-        with open(CONFIG_FILE, 'w') as f:
+        with open(config_file, 'w') as f:
             json.dump(config, f, indent=4)
-        messagebox.showinfo("Info", "Configuration saved successfully.")
+        messagebox.showinfo("Info", f"Configuration saved as '{config_name}.json'")
     except Exception as e:
         messagebox.showerror("Error", f"Failed to save config:\n{e}")
 
 def load_config():
+    file_path = filedialog.askopenfilename(
+        initialdir=config_dir,
+        title="Select config file",
+        filetypes=(("JSON files", "*.json"), ("All files", "*.*"))
+    )
+    if not file_path:
+        return
+
     try:
-        with open(CONFIG_FILE, "r") as f:
+        with open(file_path, 'r') as f:
             config = json.load(f)
-            return config
-    except Exception:
-        return {}
+        apply_config_to_ui(config)
+        messagebox.showinfo("Info", f"Configuration '{os.path.basename(file_path)}' loaded successfully.")
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to load config:\n{e}")
 
 def apply_config_to_ui(config):
     global voltages
@@ -517,13 +535,18 @@ def disconnect_com():
 
 # --- Xử lý sự kiện khi nhấn Enter trong ô nhập điện áp ---
 def on_voltage_entry_return(event):
+    global index
+    widget = event.widget
     # chỉ xử lý khi đang ở mode 1 và đã kết nối
     if mode_selected == 1 and ser and ser.is_open:
-        try:
-            new_val = float(event.widget.get())
-            set_voltage(new_val)
-        except ValueError:
-            messagebox.showerror("Error", "Invalid voltage value!")
+        if widget in entry_volt_boxes:
+            i = entry_volt_boxes.index(widget)  # xác định ô nào được Enter
+            try:
+                val = float(widget.get())
+                index = i  # cập nhật index
+                set_voltage(val)
+            except:
+                messagebox.showerror("Error", f"Invalid voltage at box {i+1}!")
 
 def on_num_boxes_change(event=None):
     try:
@@ -544,6 +567,7 @@ def on_custom_voltage_enter(event=None):
             set_voltage(val)
         except:
             messagebox.showerror("Error", "Invalid custom voltage value!")
+            
 def on_current_enter(event=None):
     if ser and ser.is_open:
         try:
@@ -675,7 +699,7 @@ btn_save_config = tk.Button(frame_device, text="💾 Save Config", bg="#ccffcc",
 btn_save_config.pack(side="left", padx=10)
 
 # Nút Load Config
-btn_load_config = tk.Button(frame_device, text="📂 Load Config", bg="#cce6ff", command=on_load_config)
+btn_load_config = tk.Button(frame_device, text="📂 Load Config", bg="#cce6ff", command=load_config)
 btn_load_config.pack(side="left", padx=5)
 
 frame_com = tk.LabelFrame(root, text="COM Connection", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
@@ -827,17 +851,15 @@ lbl_step.grid(row=1, column=1, padx=5, pady=5)
 tk.Button(frame_btn, text="▶ Step+", width=10, bg="#cce6ff", command=step_next).grid(row=1, column=2, padx=5, pady=5)
 
 reverse_var = tk.BooleanVar(value=False)
-tk.Checkbutton(frame_btn, text="🔁 Reverse direction", variable=reverse_var).grid(row=2, column=0, columnspan=3)
+tk.Checkbutton(frame_btn, text="🔁 Reverse direction", variable=reverse_var).grid(row=3, column=0, columnspan=3)
 
 tk.Button(frame_btn, text="⏩ Next voltage", width=20, bg="#e6e6fa", command=next_voltage)\
-    .grid(row=3, column=0, columnspan=3, pady=5)
-tk.Button(frame_btn, text="🔄 Reset mode", width=20, bg="#e6e6fa", command=reset_mode)\
     .grid(row=4, column=0, columnspan=3, pady=5)
-tk.Button(frame_btn, text="🔄 Check for update", width=20, bg="#e6ffe6", command=check_update)\
+tk.Button(frame_btn, text="🔄 Reset mode", width=20, bg="#e6e6fa", command=reset_mode)\
     .grid(row=5, column=0, columnspan=3, pady=5)
-tk.Button(frame_btn, text="❌ Exit", width=20, bg="#ffcccc", command=quit_app)\
+tk.Button(frame_btn, text="🔄 Check for update", width=20, bg="#e6ffe6", command=check_update)\
     .grid(row=6, column=0, columnspan=3, pady=5)
-
-cfg = load_config()
+tk.Button(frame_btn, text="❌ Exit", width=20, bg="#ffcccc", command=quit_app)\
+    .grid(row=7, column=0, columnspan=3, pady=5)
 
 root.mainloop()
