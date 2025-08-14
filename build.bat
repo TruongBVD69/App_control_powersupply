@@ -8,7 +8,7 @@ set ASSETS_DIR=assets
 set MAIN_PY=%SOURCE_DIR%\main.py
 set ICON_PATH=%ASSETS_DIR%\myicon.ico
 set OUTPUT_DIR=Output
-set APP_NAME=My GPP-3323 Controller
+set APP_NAME=PowerSupply Controller
 
 REM ================================
 REM Delete old build directories if they exist
@@ -30,7 +30,7 @@ if not exist %OUTPUT_DIR% mkdir %OUTPUT_DIR%
 
 (
     echo AppName: %APP_NAME%
-    echo Version: v%APP_VERSION%
+    echo Version: %APP_VERSION%
     echo BuildTime: %date% %time%
 ) > %OUTPUT_DIR%\version.txt
 

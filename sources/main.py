@@ -68,7 +68,7 @@ def refresh_version_info():
     global CURRENT_VERSION, app_info
     app_info = get_app_info()
     CURRENT_VERSION = app_info["Version"]
-    root.title(f"{app_info['AppName']} - {CURRENT_VERSION}")
+    root.title(f"{app_info['AppName']}")
     # Nếu bạn có label version thì cập nhật ở đây luôn
     # ví dụ: lbl_version.config(text=f"Version: {CURRENT_VERSION}")
 
@@ -639,27 +639,27 @@ def check_update():
                 if assets:
                     download_url = assets[0]['browser_download_url']
                     answer = messagebox.askyesno(
-                        "Cập nhật mới",
-                        f"Đã có bản mới: {latest_version}\n"
-                        f"Bạn đang dùng: {CURRENT_VERSION}\n\n"
-                        "Bạn có muốn cập nhật ngay không?"
+                        "New Update Available",
+                        f"A new version is available: {latest_version}\n"
+                        f"You are using: {CURRENT_VERSION}\n\n"
+                        "Do you want to update now?"
                     )
                     if answer:
                         download_and_replace(download_url, latest_version)
                 else:
                     messagebox.showinfo(
-                        "Cập nhật mới",
-                        f"Đã có bản mới {latest_version}, nhưng không tìm thấy file đính kèm!"
+                        "New Update Available",
+                        f"A new version {latest_version} is available, but no attached file was found!"
                     )
             else:
                 messagebox.showinfo(
-                    "Thông báo",
-                    f"Bạn đang dùng bản mới nhất ({CURRENT_VERSION})"
+                    "Information",
+                    f"You are already using the latest version ({CURRENT_VERSION})"
                 )
         else:
-            messagebox.showerror("Error", f"Error kết nối GitHub: {resp.status_code}")
+            messagebox.showerror("Error", f"Failed to connect to GitHub: {resp.status_code}")
     except Exception as e:
-        messagebox.showerror("Error", f"Không kiểm tra được update:\n{e}")
+        messagebox.showerror("Error", f"Could not check for updates:\n{e}")
 
 def download_and_replace(download_url, latest_version):
     try:
@@ -912,5 +912,31 @@ tk.Button(frame_btn, text="🔄 Check for update", width=20, bg="#e6ffe6", comma
     .grid(row=6, column=0, columnspan=3, pady=5)
 tk.Button(frame_btn, text="❌ Exit", width=20, bg="#ffcccc", command=quit_app)\
     .grid(row=7, column=0, columnspan=3, pady=5)
+
+# ================= Footer chuyên nghiệp =================
+footer_frame = tk.Frame(root, bg="#f0f7ff")
+footer_frame.pack(side="bottom", fill="x", pady=5)
+
+# Dòng bản quyền
+copyright_text = "© 2025 BuiVuDuyTruong-Embedded. All rights reserved."
+lbl_copyright = tk.Label(
+    footer_frame,
+    text=copyright_text,
+    bg="#f0f7ff",
+    fg="#555555",
+    font=("Arial", 8)
+)
+lbl_copyright.pack(side="left", padx=5)
+
+# Phiên bản app
+app_version_text = f"Version: {CURRENT_VERSION}"
+lbl_version = tk.Label(
+    footer_frame,
+    text=app_version_text,
+    bg="#f0f7ff",
+    fg="#555555",
+    font=("Arial", 8)
+)
+lbl_version.pack(side="right", padx=5)
 
 root.mainloop()
