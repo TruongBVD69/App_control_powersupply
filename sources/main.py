@@ -16,7 +16,7 @@ from tkinter import filedialog
 
 # ======================= BIẾN TOÀN CỤC =======================
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/TruongBVD69/App_control_powersupply/releases/latest"
-CURRENT_VERSION = "v1.9.1"
+CURRENT_VERSION = "1.9.1"
 
 ser = None
 current_voltage = 0.0
