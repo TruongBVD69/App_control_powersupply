@@ -1,3 +1,3 @@
 AppName: PowerSupply Controller
-Version: 2.1.2
-BuildTime: Thu 08/14/2025 13:23:26.52
+Version: 2.1.3
+BuildTime: Thu 08/14/2025 13:46:28.85

@@ -30,9 +30,12 @@ step_index = 1
 voltage_step = step_options[step_index]
 
 appdata_dir = os.getenv('APPDATA')
-config_dir = os.path.join(appdata_dir, 'MyGPPController')
+config_dir = os.path.join(appdata_dir, 'PowerSupply Controller', 'config')
 os.makedirs(config_dir, exist_ok=True)
-CONFIG_FILE = os.path.join(config_dir, 'config.json')
+download_folder = os.path.join(appdata_dir, 'PowerSupply Controller', 'download')
+os.makedirs(download_folder, exist_ok=True)  # tạo nếu chưa có
+temp_dir = os.path.join(appdata_dir, 'PowerSupply Controller', 'temp')
+os.makedirs(temp_dir, exist_ok=True)  # tạo nếu chưa có
 
 mode_selected = 1  # 1: list mặc định, 2: tự nhập
 
@@ -665,8 +668,7 @@ def download_and_replace(download_url, latest_version):
     try:
         filename = download_url.split('/')[-1]
 
-        # Thư mục Downloads
-        download_folder = tempfile.gettempdir()
+        # Thư mục Download
         if not os.path.exists(download_folder):
             download_folder = os.getcwd()  # fallback
 
@@ -683,7 +685,6 @@ def download_and_replace(download_url, latest_version):
                 f.write(chunk)
 
         # Tạo file batch cập nhật
-        temp_dir = tempfile.gettempdir()
         batch_path = os.path.join(temp_dir, "update_script.bat")
 
         # 👉 Sửa đường dẫn này theo đường dẫn cài đặt hiện tại của bạn

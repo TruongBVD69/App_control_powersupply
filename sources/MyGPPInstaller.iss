@@ -1,6 +1,6 @@
 ; Script tạo installer cho My GPP-3323 Controller
 ; #define ProjectDir ExtractFileDir(__FILE__) + "\"
-#define MyAppVersion "2.1.2"
+#define MyAppVersion "2.1.3"
 #define MyAppName "PowerSupply Controller"
 
 [Setup]
@@ -8,7 +8,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 DefaultDirName={pf}\PowerSupply Controller
 DefaultGroupName=PowerSupply Controller
-OutputBaseFilename=PowerSupplyController_Installer
+OutputBaseFilename=PowerSupplyController
 OutputDir={#SourcePath}..\Output
 Compression=lzma
 SolidCompression=yes
