@@ -43,6 +43,8 @@ auto_running = False
 
 device_type = "GPP"  # GPP hoặc Keysight
 
+read_response_enabled = False  # mặc định tắt đọc phản hồi
+
 # ======================= HÀM ĐỌC VERSION TỪ FILE =======================
 def get_app_info():
     try:
@@ -83,9 +85,26 @@ def send_cmd(cmd):
         ser.write((cmd + '\n').encode('ascii'))
     else:
         return "--"  # nếu chưa chọn loại máy
-    time.sleep(0.1)
-    resp = ser.readline().decode(errors='ignore').strip()
-    return resp
+    if read_response_enabled:
+        time.sleep(0.1)
+        resp = ser.readline().decode(errors='ignore').strip()
+        return resp
+    else:
+        return ""  # nếu tắt thì không đọc
+
+def toggle_read_response():
+    global read_response_enabled
+    read_response_enabled = not read_response_enabled
+    btn_toggle_resp.config(
+        text=f"Read Resp: {'ON' if read_response_enabled else 'OFF'}",
+        bg="lightgreen" if read_response_enabled else "lightcoral"
+    )
+
+def update_toggle_button():
+    btn_toggle_resp.config(
+        text=f"Read Resp: {'ON' if read_response_enabled else 'OFF'}",
+        bg="lightgreen" if read_response_enabled else "lightcoral"
+    )
 
 def set_voltage(v):
     global current_voltage
@@ -95,15 +114,17 @@ def set_voltage(v):
     if device_type == "GPP":
         # GPP-3323
         send_cmd(f'VOLT {current_voltage}')
-        time.sleep(0.01)
-        readv = send_cmd('MEAS:VOLT?')
     elif device_type == "Keysight":
         # Keysight
         send_cmd(f'VOLT {current_voltage}')
-        time.sleep(0.01)
-        readv = send_cmd('MEAS:VOLT?')
     else:
         readv = "--"  # nếu chưa chọn loại máy
+
+    time.sleep(0.01)
+    if read_response_enabled:  # chỉ đọc khi được bật
+        readv = send_cmd('MEAS:VOLT?')
+    else:
+        readv = "--"
 
     # Cập nhật label
     lbl_voltage.config(
@@ -113,13 +134,9 @@ def set_voltage(v):
     # highlight ô entry nếu đang ở mode 1
     if mode_selected == 1:
         for i, e in enumerate(entry_volt_boxes):
-            try:
-                val = float(e.get())
-                if abs(val - current_voltage) < 1e-6:
-                    e.config(bg="lightgreen")
-                else:
-                    e.config(bg="white")
-            except:
+            if i == index:
+                e.config(bg="lightgreen")
+            else:
                 e.config(bg="white")
 
 def output_on():
@@ -229,18 +246,24 @@ def step_prev():
         messagebox.showinfo("Info", "Already at the largest step.")
 
 def increase_voltage():
-    set_voltage(current_voltage + voltage_step)
+    global current_voltage
+    new_voltage = current_voltage + voltage_step
+    set_voltage(new_voltage)
+    
+    # cập nhật vào ô đang highlight
+    if mode_selected == 1 and 0 <= index < len(entry_volt_boxes):
+        entry_volt_boxes[index].delete(0, tk.END)
+        entry_volt_boxes[index].insert(0, f"{new_voltage:.3f}")
 
 def decrease_voltage():
-    set_voltage(current_voltage - voltage_step)
-
-# def highlight_mode():
-#     if mode_selected == 1:
-#         btn_mode1.config(bg="lightgreen", activebackground="lightgreen")
-#         btn_mode2.config(bg="SystemButtonFace", activebackground="SystemButtonFace")
-#     elif mode_selected == 2:
-#         btn_mode2.config(bg="lightgreen", activebackground="lightgreen")
-#         btn_mode1.config(bg="SystemButtonFace", activebackground="SystemButtonFace")
+    global current_voltage
+    new_voltage = current_voltage - voltage_step
+    set_voltage(new_voltage)
+    
+    # cập nhật vào ô đang highlight
+    if mode_selected == 1 and 0 <= index < len(entry_volt_boxes):
+        entry_volt_boxes[index].delete(0, tk.END)
+        entry_volt_boxes[index].insert(0, f"{new_voltage:.3f}")
 
 def choose_mode_1():
     global mode_selected
@@ -340,11 +363,16 @@ def toggle_auto_run():
         btn_auto_run.config(text="▶ Auto Run", bg="#ffcccc")  # Màu đỏ khi dừng
 
 def save_config():
-    config_name = simpledialog.askstring("Save Config", "Enter config name:")
-    if not config_name:
-        return  # Hủy nếu không nhập
+    # Mở cửa sổ chọn nơi lưu file + đặt tên
+    file_path = filedialog.asksaveasfilename(
+        initialdir=config_dir,
+        title="Save Config As",
+        defaultextension=".json",
+        filetypes=(("JSON files", "*.json"), ("All files", "*.*"))
+    )
+    if not file_path:
+        return  # Người dùng hủy
 
-    config_file = os.path.join(config_dir, f"{config_name}.json")
     config = {
         "num_voltage_boxes": int(combo_num_boxes.get()),
         "voltages": get_entry_voltages(),
@@ -358,9 +386,9 @@ def save_config():
     }
 
     try:
-        with open(config_file, 'w') as f:
+        with open(file_path, 'w') as f:
             json.dump(config, f, indent=4)
-        messagebox.showinfo("Info", f"Configuration saved as '{config_name}.json'")
+        messagebox.showinfo("Info", f"Configuration saved as '{os.path.basename(file_path)}'")
     except Exception as e:
         messagebox.showerror("Error", f"Failed to save config:\n{e}")
 
@@ -785,27 +813,39 @@ frame_protection = tk.LabelFrame(frame_top, text="OVP / OCP Protection",
                                  bd=2, relief="groove", padx=5, pady=5)
 frame_protection.pack(side="right", padx=10, anchor="n")
 
+# Nút bật/tắt đọc phản hồi
+btn_toggle_resp = tk.Button(
+    frame_protection,
+    text="Read Resp: ON",
+    bg="lightgreen",
+    font=("Arial", 10, "bold"),
+    command=toggle_read_response
+)
+btn_toggle_resp.grid(row=0, column=0, padx=10, pady=3)  # đặt cùng hàng với lbl_voltage
+update_toggle_button()  # cập nhật giao diện nút ngay khi tạo
+
 # OVP
-tk.Label(frame_protection, text="OVP (V):", bg="#ffffff").grid(row=0, column=0, padx=5, pady=2)
+tk.Label(frame_protection, text="OVP (V):", bg="#ffffff").grid(row=1, column=0, padx=5, pady=2)
 entry_ovp = tk.Entry(frame_protection, width=8, justify="center")
-entry_ovp.grid(row=0, column=1, padx=5, pady=2)
+entry_ovp.grid(row=1, column=1, padx=5, pady=2)
 entry_ovp.bind("<Return>", on_ovp_enter)
 entry_ovp.insert(0, "5.0")
 btn_ovp_on = tk.Button(frame_protection, text="OVP ON", width=8, command=lambda: set_ovp(True))
-btn_ovp_on.grid(row=0, column=2, padx=5, pady=2)
+btn_ovp_on.grid(row=1, column=2, padx=5, pady=2)
 btn_ovp_off = tk.Button(frame_protection, text="OVP OFF", width=8, command=lambda: set_ovp(False))
-btn_ovp_off.grid(row=0, column=3, padx=5, pady=2)
+btn_ovp_off.grid(row=1, column=3, padx=5, pady=2)
 
 # OCP
-tk.Label(frame_protection, text="OCP (A):", bg="#ffffff").grid(row=1, column=0, padx=5, pady=2)
+tk.Label(frame_protection, text="OCP (A):", bg="#ffffff").grid(row=2, column=0, padx=5, pady=2)
 entry_ocp = tk.Entry(frame_protection, width=8, justify="center")
-entry_ocp.grid(row=1, column=1, padx=5, pady=2)
+entry_ocp.grid(row=2, column=1, padx=5, pady=2)
 entry_ocp.bind("<Return>", on_ocp_enter)
 entry_ocp.insert(0, "0.3")
 btn_ocp_on = tk.Button(frame_protection, text="OCP ON", width=8, command=lambda: set_ocp(True))
-btn_ocp_on.grid(row=1, column=2, padx=5, pady=2)
+btn_ocp_on.grid(row=2, column=2, padx=5, pady=2)
 btn_ocp_off = tk.Button(frame_protection, text="OCP OFF", width=8, command=lambda: set_ocp(False))
-btn_ocp_off.grid(row=1, column=3, padx=5, pady=2)
+btn_ocp_off.grid(row=2, column=3, padx=5, pady=2)
+
 
 # Bottom row
 frame_bottom = tk.Frame(frame_main, bg="#f0f7ff")
