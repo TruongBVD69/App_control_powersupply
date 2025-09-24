@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 from tkinter import simpledialog
 from tkinter import filedialog
+from PIL import Image, ImageTk
 
 # ======================= BIẾN TOÀN CỤC =======================
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/TruongBVD69/App_control_powersupply/releases/latest"
@@ -287,7 +288,7 @@ def build_voltage_entries(n):
     entry_volt_boxes.clear()
     NUM_VOLTAGE_BOXES = n
 
-    max_per_col = 10  # số ô tối đa mỗi cột
+    max_per_col = 8  # số ô tối đa mỗi cột
     for i in range(NUM_VOLTAGE_BOXES):
         col = i // max_per_col      # cột hiện tại
         row = i % max_per_col       # hàng trong cột
@@ -717,10 +718,13 @@ def open_installed_voice_app():
 
 # ======================= GIAO DIỆN =======================
 root = tk.Tk()
-root.configure(bg="#f0f7ff")  # màu nền tổng thể
-refresh_version_info()
-
+MIN_WIDTH = 743
+MIN_HEIGHT = 850
+root.geometry("743x600")
+root.minsize(MIN_WIDTH, MIN_HEIGHT)
+root.configure(bg="#f0f7ff")
 root.resizable(True, True)
+refresh_version_info()
 
 # Style for LabelFrames
 frame_device = tk.LabelFrame(root, text="Device", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
@@ -777,19 +781,20 @@ lbl_output.grid(row=1, column=0, sticky="w", pady=3)
 lbl_voltage = tk.Label(frame_status, text="⚡ Voltage: --", fg="#000000", bg="#ffffff", font=("Arial", 14, "bold"))
 lbl_voltage.grid(row=2, column=0, sticky="w", pady=3)
 
-# Main frame
+# Main content frame (trên footer)
 frame_main = tk.Frame(root, bg="#f0f7ff")
-frame_main.pack(pady=5)
+frame_main.pack(side="top", fill="both", expand=True, pady=5)
 
-# Top row
-frame_top = tk.Frame(frame_main, bg="#f0f7ff")
-frame_top.pack(side="top", fill="x", pady=5)
+# ================== TOP FRAMES ==================
+frame_top = tk.Frame(root, bg="#f0f7ff")
+frame_top.pack(side="top", fill="x", padx=10, pady=5)
 
-# Left: Mode selection
+# Frame Mode
 frame_mode = tk.LabelFrame(frame_top, text="Select Mode",
                            bg="#ffffff", fg="#003366",
-                           bd=2, relief="groove", padx=5, pady=5)
-frame_mode.pack(side="left", padx=10, anchor="n")
+                           bd=2, relief="groove", width=300, height=150)
+frame_mode.pack_propagate(False)
+frame_mode.pack(side="left", padx=(5,2))
 
 mode_var = tk.IntVar(value=1)
 rb_mode1 = tk.Radiobutton(frame_mode, text="Mode 1: Default list",
@@ -808,11 +813,12 @@ entry_custom_voltage = tk.Entry(frame_mode, bg="#f0fff0")
 entry_custom_voltage.pack(pady=3)
 entry_custom_voltage.bind("<Return>", on_custom_voltage_enter)
 
-# Right: OVP/OCP protection
-frame_protection = tk.LabelFrame(frame_top, text="OVP / OCP Protection",
+# Frame Protection
+frame_protection = tk.LabelFrame(frame_top, text="OVP/OCP Protection",
                                  bg="#ffffff", fg="#003366",
-                                 bd=2, relief="groove", padx=5, pady=5)
-frame_protection.pack(side="right", padx=10, anchor="n")
+                                 bd=2, relief="groove", width=300, height=150)
+frame_protection.pack_propagate(False)
+frame_protection.pack(side="left", padx=(2,5))
 
 # Nút bật/tắt đọc phản hồi
 btn_toggle_resp = tk.Button(
@@ -847,21 +853,19 @@ btn_ocp_on.grid(row=2, column=2, padx=5, pady=2)
 btn_ocp_off = tk.Button(frame_protection, text="OCP OFF", width=8, command=lambda: set_ocp(False))
 btn_ocp_off.grid(row=2, column=3, padx=5, pady=2)
 
-
-# Bottom row
-frame_bottom = tk.Frame(frame_main, bg="#f0f7ff")
-frame_bottom.pack(side="top", fill="x", pady=5)
-
+# ================== BOTTOM FRAMES ==================
+frame_bottom = tk.Frame(root, bg="#f0f7ff")
+frame_bottom.pack(side="top", fill="both", expand=True, padx=10, pady=5)
 # Left: Voltage list Mode 1
-frame_left = tk.LabelFrame(frame_bottom, text="Voltage Mode 1",
-                           bg="#ffffff", fg="#003366",
-                           bd=2, relief="groove", padx=5, pady=5)
-frame_left.pack(side="left", padx=10, anchor="n")
+frame_numboxs = tk.LabelFrame(frame_bottom, text="Voltage for Mode 1",
+                              bg="#ffffff", fg="#003366",
+                              bd=2, relief="groove")
+frame_numboxs.pack(side="left", fill="both", expand=True, padx=5, pady=5)
 
-frame_num_boxes = tk.Frame(frame_left, bg="#ffffff")
+frame_num_boxes = tk.Frame(frame_numboxs, bg="#ffffff")
 frame_num_boxes.pack(pady=(5, 0))
 
-frame_auto_run = tk.Frame(frame_left, bg="#ffffff")
+frame_auto_run = tk.Frame(frame_numboxs, bg="#ffffff")
 frame_auto_run.pack(pady=5)
 
 tk.Label(frame_auto_run, text="Delay (s):").grid(row=7, column=0, pady=5)
@@ -878,19 +882,38 @@ combo_num_boxes = ttk.Combobox(frame_num_boxes, width=5, values=[2,3,4,5,6,7,8,9
 combo_num_boxes.set(NUM_VOLTAGE_BOXES)
 combo_num_boxes.pack(side="left", padx=5)
 
-frame_mode1_boxes = tk.Frame(frame_left, bg="#ffffff")
-frame_mode1_boxes.pack(pady=5)
+# Tạo canvas và scrollbar
+frame_mode1_canvas = tk.Canvas(frame_numboxs, bg="#ffffff", highlightthickness=0)
+scroll_y = tk.Scrollbar(frame_numboxs, orient="vertical", command=frame_mode1_canvas.yview)
+scroll_x = tk.Scrollbar(frame_numboxs, orient="horizontal", command=frame_mode1_canvas.xview)
+
+frame_mode1_canvas.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+
+# Đặt scrollbar
+scroll_y.pack(side="right", fill="y")
+scroll_x.pack(side="bottom", fill="x")
+frame_mode1_canvas.pack(side="left", fill="both", expand=True)
+
+# Frame chứa các Entry
+frame_mode1_boxes = tk.Frame(frame_mode1_canvas, bg="#ffffff")
+frame_mode1_canvas.create_window((0,0), window=frame_mode1_boxes, anchor="nw")
+
+# Update scroll region
+frame_mode1_boxes.bind("<Configure>", lambda e: frame_mode1_canvas.configure(
+    scrollregion=frame_mode1_canvas.bbox("all")
+))
 # Sự kiện khi chọn từ danh sách
 combo_num_boxes.bind("<<ComboboxSelected>>", on_num_boxes_change)
 # Sự kiện khi nhấn Enter để nhập số
 combo_num_boxes.bind("<Return>", lambda event: on_num_boxes_change(event))
 build_voltage_entries(NUM_VOLTAGE_BOXES)
 
-# Right: Voltage adjustment
+# ---------- Frame Voltage Adjustment ----------
 frame_btn = tk.LabelFrame(frame_bottom, text="Voltage Adjustment",
                           bg="#ffffff", fg="#003366",
-                          bd=2, relief="groove", padx=5, pady=5)
-frame_btn.pack(side="right", padx=10, anchor="n")
+                          bd=2, relief="groove", width=250, height=300)
+frame_btn.pack_propagate(False)
+frame_btn.pack(side="left", fill="y", padx=5, pady=5)  # luôn cùng top, cao bằng frame_bottom
 
 tk.Button(frame_btn, text="⬆ Increase", width=10, bg="#cce6ff", command=increase_voltage).grid(row=0, column=1, padx=5, pady=5)
 tk.Button(frame_btn, text="⬇ Decrease", width=10, bg="#cce6ff", command=decrease_voltage).grid(row=2, column=1, padx=5, pady=5)
@@ -914,9 +937,11 @@ tk.Button(frame_btn, text="🔄 Check for update", width=20, bg="#e6ffe6", comma
 tk.Button(frame_btn, text="❌ Exit", width=20, bg="#ffcccc", command=quit_app)\
     .grid(row=7, column=0, columnspan=3, pady=5)
 
+
 # ================= Footer chuyên nghiệp =================
-footer_frame = tk.Frame(root, bg="#f0f7ff")
-footer_frame.pack(side="bottom", fill="x", pady=5)
+footer_frame = tk.Frame(root, bg="#f0f7ff", height=20)
+footer_frame.pack_propagate(False)  # không co theo nội dung
+footer_frame.pack(side="bottom", fill="x")
 
 # Dòng bản quyền
 copyright_text = "© 2025 BuiVuDuyTruong-Embedded. All rights reserved."
@@ -928,6 +953,36 @@ lbl_copyright = tk.Label(
     font=("Arial", 8)
 )
 lbl_copyright.pack(side="left", padx=5)
+
+# ==== LINK AREA ====
+def callback(url):
+    webbrowser.open_new(url)
+
+# Link frame ở giữa
+link_frame = tk.Frame(footer_frame, bg="#f0f7ff")
+link_frame.pack(side="right", pady=2)  # top để canh giữa theo chiều ngang
+
+def load_icon(path, size=(20, 20)):
+    img = Image.open(path)
+    img = img.resize(size, Image.LANCZOS)
+    return ImageTk.PhotoImage(img)
+
+# Load icons (resize về 20x20)
+fb_icon = load_icon("../assets/icons8-facebook-48.png", (20, 20))
+linkedin_icon = load_icon("../assets/icons8-linkedin-48.png", (20, 20))
+github_icon = load_icon("../assets/icons8-github-32.png", (20, 20))
+
+def make_icon_link(parent, icon, url, tooltip=""):
+    lbl = tk.Label(parent, image=icon, bg="#f0f7ff", cursor="hand2")
+    lbl.image = icon  # giữ reference tránh GC
+    lbl.pack(side="left", padx=8)
+    lbl.bind("<Button-1>", lambda e: callback(url))
+    return lbl
+
+# Tạo 3 icon link
+make_icon_link(link_frame, fb_icon, "https://www.facebook.com/bui.truong.902266")
+make_icon_link(link_frame, linkedin_icon, "https://www.linkedin.com/in/b%C3%B9i-tr%C6%B0%E1%BB%9Dng-embedded/")
+make_icon_link(link_frame, github_icon, "https://github.com/TruongBVD69")
 
 # Phiên bản app
 app_version_text = f"Version: {CURRENT_VERSION}"
