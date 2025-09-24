@@ -49,6 +49,15 @@ device_type = "GPP"  # GPP hoặc Keysight
 
 read_response_enabled = False  # mặc định tắt đọc phản hồi
 
+def resource_path(relative_path: str) -> str:
+    """Get absolute path to resource, works for dev and PyInstaller"""
+    if getattr(sys, 'frozen', False):
+        base_path = os.path.dirname(sys.executable)  # exe đã bundle sẵn
+    else:
+        # lấy thư mục gốc project (ra ngoài khỏi sources)
+        base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    return os.path.join(base_path, relative_path)
+
 # ======================= HÀM ĐỌC VERSION TỪ FILE =======================
 def get_app_info():
     try:
@@ -667,13 +676,11 @@ def check_update():
 
 def download_and_replace(download_url, latest_version):
     try:
+        global download_folder, temp_dir  # để dùng biến đã khai báo ngoài
+
         filename = download_url.split('/')[-1]
-
-        # Thư mục Download
-        if not os.path.exists(download_folder):
-            download_folder = os.getcwd()  # fallback
-
         save_path = os.path.join(download_folder, filename)
+
         if os.path.exists(save_path):
             base, ext = os.path.splitext(save_path)
             save_path = f"{base}_{latest_version}{ext}" # dùng version mới từ GitHub
@@ -962,15 +969,17 @@ def callback(url):
 link_frame = tk.Frame(footer_frame, bg="#f0f7ff")
 link_frame.pack(side="right", pady=2)  # top để canh giữa theo chiều ngang
 
-def load_icon(path, size=(20, 20)):
-    img = Image.open(path)
-    img = img.resize(size, Image.LANCZOS)
+def load_icon(path, size=None):
+    """Load icon từ path. Nếu size=None thì giữ nguyên, ngược lại resize."""
+    img = Image.open(resource_path(path))
+    if size:  # có yêu cầu resize
+        img = img.resize(size, Image.LANCZOS)
     return ImageTk.PhotoImage(img)
 
-# Load icons (resize về 20x20)
-fb_icon = load_icon("../assets/icons8-facebook-48.png", (20, 20))
-linkedin_icon = load_icon("../assets/icons8-linkedin-48.png", (20, 20))
-github_icon = load_icon("../assets/icons8-github-32.png", (20, 20))
+# Dùng chung một hàm
+fb_icon = load_icon("assets/icons8-facebook-48.png", (20, 20))
+linkedin_icon = load_icon("assets/icons8-linkedin-48.png", (20, 20))
+github_icon = load_icon("assets/icons8-github-32.png", (20, 20))
 
 def make_icon_link(parent, icon, url, tooltip=""):
     lbl = tk.Label(parent, image=icon, bg="#f0f7ff", cursor="hand2")

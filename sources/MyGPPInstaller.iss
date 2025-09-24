@@ -1,6 +1,6 @@
 ; Script tạo installer cho My GPP-3323 Controller
 ; #define ProjectDir ExtractFileDir(__FILE__) + "\"
-#define MyAppVersion "2.1.4"
+#define MyAppVersion "2.1.5"
 #define MyAppName "PowerSupply Controller"
 
 [Setup]
@@ -23,6 +23,8 @@ Source: "{#SourcePath}..\dist\main\*"; DestDir: "{app}"; Flags: ignoreversion re
 Source: "{#SourcePath}..\Output\version.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; copy file app phụ
 Source: "{#SourcePath}..\dist\voice_app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; copy folder assets (ảnh, icon…)
+Source: "{#SourcePath}..\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\PowerSupply Controller"; Filename: "{app}\main.exe"
