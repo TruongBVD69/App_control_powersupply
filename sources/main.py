@@ -14,6 +14,9 @@ import tempfile
 from tkinter import simpledialog
 from tkinter import filedialog
 from PIL import Image, ImageTk
+import threading
+from urllib.parse import urlparse
+import shutil
 
 # ======================= BIẾN TOÀN CỤC =======================
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/TruongBVD69/App_control_powersupply/releases/latest"
@@ -37,6 +40,12 @@ download_folder = os.path.join(appdata_dir, 'PowerSupply Controller', 'download'
 os.makedirs(download_folder, exist_ok=True)  # tạo nếu chưa có
 temp_dir = os.path.join(appdata_dir, 'PowerSupply Controller', 'temp')
 os.makedirs(temp_dir, exist_ok=True)  # tạo nếu chưa có
+
+# Đường dẫn uninstall mặc định (chỉnh theo nơi bạn cài)
+DEFAULT_UNINSTALL_PATH = r"C:\Program Files (x86)\PowerSupply Controller\unins000.exe"
+# Nếu uninstaller hỗ trợ silent, đặt args ở đây (tuỳ uninstaller của bạn)
+DEFAULT_UNINSTALL_ARGS = ["/VERYSILENT"]   # hoặc ["/S"] tùy từng uninstaller
+DEFAULT_UNINSTALL_TIMEOUT = 90  # giây
 
 mode_selected = 1  # 1: list mặc định, 2: tự nhập
 
@@ -314,7 +323,6 @@ def build_voltage_entries(n):
 
     # Cập nhật GUI
     root.update()
-    root.geometry("")
 
 def get_entry_voltages():
     lst = []
@@ -641,13 +649,19 @@ def on_ocp_enter(event=None):
         messagebox.showerror("Error", "Device not connected!")
 
 # ==== CHECK UPDATE ====
+def parse_version(v):
+    return tuple(int(x) for x in v.strip().lstrip("v").split('.') if x.isdigit())
+
+def is_newer_version(latest, current):
+    return parse_version(latest) > parse_version(current)
+
 def check_update():
     try:
         resp = requests.get(GITHUB_API_LATEST_RELEASE, timeout=5)
         if resp.status_code == 200:
             data = resp.json()
             latest_version = data['tag_name']
-            if latest_version > CURRENT_VERSION:
+            if is_newer_version(latest_version, CURRENT_VERSION):
                 assets = data.get('assets', [])
                 if assets:
                     download_url = assets[0]['browser_download_url']
@@ -658,7 +672,13 @@ def check_update():
                         "Do you want to update now?"
                     )
                     if answer:
-                        download_and_replace(download_url, latest_version)
+                        download_and_replace(
+                            download_url,
+                            latest_version,
+                            default_uninstall_path=DEFAULT_UNINSTALL_PATH,
+                            uninstall_args=DEFAULT_UNINSTALL_ARGS,
+                            uninstall_timeout=DEFAULT_UNINSTALL_TIMEOUT
+                        )
                 else:
                     messagebox.showinfo(
                         "New Update Available",
@@ -674,46 +694,168 @@ def check_update():
     except Exception as e:
         messagebox.showerror("Error", f"Could not check for updates:\n{e}")
 
-def download_and_replace(download_url, latest_version):
-    try:
-        global download_folder, temp_dir  # để dùng biến đã khai báo ngoài
+def download_and_replace(download_url, latest_version, default_uninstall_path=None, uninstall_args=None, uninstall_timeout=60):
+    def worker():
+        prog_win = prog_label = prog_bar = None
+        tmp_path = None
+        try:
+            # Chuẩn bị tên file an toàn
+            parsed = urlparse(download_url)
+            filename = os.path.basename(parsed.path) or f"update_{latest_version}.bin"
+            filename = "".join(c for c in filename if c.isalnum() or c in "._-")
+            save_path = os.path.join(download_folder, filename)
+            if os.path.exists(save_path):
+                base, ext = os.path.splitext(save_path)
+                save_path = f"{base}_v{latest_version}{ext}"
 
-        filename = download_url.split('/')[-1]
-        save_path = os.path.join(download_folder, filename)
+            # tạo progress dialog trong main thread
+            def create_progress():
+                nonlocal prog_win, prog_label, prog_bar
+                prog_win = tk.Toplevel(root)
+                prog_win.title("Downloading update...")
+                prog_win.resizable(False, False)
+                prog_label = tk.Label(prog_win, text=f"Downloading {filename}")
+                prog_label.pack(padx=12, pady=(10,6))
+                prog_bar = ttk.Progressbar(prog_win, length=300, mode='determinate')
+                prog_bar.pack(padx=12, pady=(0,10))
+                prog_win.transient(root)
+                prog_win.grab_set()
+                prog_win.update_idletasks()
+            root.after(0, create_progress)
 
-        if os.path.exists(save_path):
-            base, ext = os.path.splitext(save_path)
-            save_path = f"{base}_{latest_version}{ext}" # dùng version mới từ GitHub
+            # Download with timeout and progress
+            with requests.get(download_url, stream=True, timeout=30) as r:
+                r.raise_for_status()
+                total = r.headers.get('Content-Length')
+                if total is not None:
+                    total = int(total)
+                    root.after(0, lambda: prog_bar.config(maximum=total))
+                bytes_written = 0
+                tmp_path = save_path + ".part"
+                with open(tmp_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        bytes_written += len(chunk)
+                        def _upd():
+                            if prog_bar and total:
+                                prog_bar['value'] = bytes_written
+                            if prog_label:
+                                if total:
+                                    percent = bytes_written / total * 100
+                                    prog_label.config(text=f"Downloading {filename} — {percent:.1f}%")
+                                else:
+                                    prog_label.config(text=f"Downloading {filename} — {bytes_written//1024} KB")
+                        root.after(0, _upd)
+                os.replace(tmp_path, save_path)
+                tmp_path = None  # đã move thành công
 
-        # Tải file
-        r = requests.get(download_url, stream=True)
-        r.raise_for_status()
-        with open(save_path, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
+            # Close progress dialog
+            root.after(0, lambda: prog_win.destroy() if prog_win else None)
 
-        # Tạo file batch cập nhật
-        batch_path = os.path.join(temp_dir, "update_script.bat")
+            # Nếu user muốn uninstall trước, hỏi đường dẫn uninstaller
+            uninstall_path = None
+            if default_uninstall_path:
+                # hỏi user có muốn dùng đường dẫn mặc định không
+                use_default = messagebox.askyesno(
+                    "Uninstall existing app?",
+                    f"Bạn muốn chạy uninstaller tại:\n{default_uninstall_path}\nTrước khi cài bản mới?"
+                )
+                if use_default:
+                    uninstall_path = default_uninstall_path
 
-        # 👉 Sửa đường dẫn này theo đường dẫn cài đặt hiện tại của bạn
-        uninstall_exe = r'"C:\Program Files (x86)\MyGPPController\unins000.exe"'
+            if not uninstall_path:
+                # hỏi user nhập đường dẫn uninstall (user có thể Cancel)
+                ans = messagebox.askyesno("Uninstall existing app?", "Bạn muốn chọn đường dẫn uninstaller thủ công trước khi cài (Recommended)?")
+                if ans:
+                    # opens file dialog để chọn exe
+                    upath = filedialog.askopenfilename(title="Select uninstall executable (unins000.exe)", filetypes=[("Executable","*.exe"),("All files","*.*")])
+                    if upath:
+                        uninstall_path = upath
 
-        with open(batch_path, 'w', encoding='utf-8') as bat:
-            bat.write("@echo off\n")
-            bat.write("echo [Updater] Đang cập nhật...\n")
-            bat.write("timeout /t 2 /nobreak >nul\n")
-            bat.write(f"{uninstall_exe}\n")
-            bat.write("timeout /t 2 /nobreak >nul\n")
-            bat.write(f'start "" "{save_path}"\n')
-            bat.write('(goto) 2>nul & del "%~f0"\n')
+            # Nếu có uninstall_path -> thực thi uninstaller (với args nếu cung cấp)
+            if uninstall_path:
+                if not os.path.exists(uninstall_path):
+                    root.after(0, lambda: messagebox.showwarning("Uninstall not found", f"Không tìm thấy file uninstaller:\n{uninstall_path}\nBỏ qua bước uninstall."))
+                else:
+                    # hỏi xác nhận cuối cùng
+                    confirm = messagebox.askyesno("Confirm uninstall", f"Ứng dụng sẽ chạy uninstaller:\n{uninstall_path}\nBạn có chắc muốn tiếp tục?")
+                    if confirm:
+                        try:
+                            # build command
+                            cmd = [uninstall_path]
+                            if uninstall_args:
+                                # nếu uninstall_args là string -> split, nếu list -> extend
+                                if isinstance(uninstall_args, str):
+                                    cmd.extend(uninstall_args.split())
+                                else:
+                                    cmd.extend(uninstall_args)
+                            # run and wait (có timeout)
+                            # note: uninstaller thường spawn child process and exit 0 even khi uninstall tiếp tục.
+                            proc = subprocess.run(cmd, shell=False, timeout=uninstall_timeout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            if proc.returncode != 0:
+                                # hiển thị cảnh báo nhưng cho phép tiếp tục
+                                msg = proc.stderr.decode(errors='ignore')[:200] if proc.stderr else f"Exit code: {proc.returncode}"
+                                root.after(0, lambda: messagebox.showwarning("Uninstall warning", f"Uninstaller returned non-zero: {msg}\nBạn có muốn tiếp tục cài đặt bản mới?"))
+                                # hỏi tiếp tục hay dừng
+                                cont = messagebox.askyesno("Continue install?", "Uninstall không trả về trạng thái thành công. Bạn có muốn tiếp tục cài bản mới không?")
+                                if not cont:
+                                    root.after(0, lambda: messagebox.showinfo("Cancelled", "Cập nhật đã bị huỷ."))
+                                    return
+                            else:
+                                root.after(0, lambda: messagebox.showinfo("Uninstall", "Uninstall hoàn tất (hoặc đã được khởi chạy)."))
+                        except subprocess.TimeoutExpired:
+                            cont = messagebox.askyesno("Timeout", f"Uninstaller mất quá {uninstall_timeout} giây và chưa kết thúc.\nBạn muốn tiếp tục (bỏ qua) hay hủy cập nhật?")
+                            if not cont:
+                                root.after(0, lambda: messagebox.showinfo("Cancelled", "Cập nhật đã bị huỷ do uninstaller timeout."))
+                                return
+                        except Exception as ex:
+                            cont = messagebox.askyesno("Error running uninstaller", f"Lỗi khi chạy uninstaller:\n{ex}\nBạn có muốn tiếp tục cài đặt bản mới không?")
+                            if not cont:
+                                root.after(0, lambda: messagebox.showinfo("Cancelled", "Cập nhật đã bị huỷ."))
+                                return
 
-        # Chạy batch và đóng app
-        subprocess.Popen(batch_path, shell=True)
-        messagebox.showinfo("Đang cập nhật", "Ứng dụng sẽ đóng và bản mới sẽ được cài đặt.")
-        root.destroy()
+            # Sau bước uninstall (hoặc bỏ qua) -> chạy installer đã tải
+            ext = os.path.splitext(save_path)[1].lower()
+            try:
+                if ext in ('.exe', '.msi'):
+                    if sys.platform.startswith("win"):
+                        os.startfile(save_path)
+                    else:
+                        subprocess.Popen([save_path], shell=False)
+                else:
+                    # không phải installer -> mở thư mục chứa file
+                    folder = os.path.dirname(save_path)
+                    if sys.platform.startswith("win"):
+                        os.startfile(folder)
+                    elif sys.platform.startswith("linux"):
+                        subprocess.Popen(["xdg-open", folder])
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(["open", folder])
 
-    except Exception as e:
-        messagebox.showerror("Error tải", f"Không tải được file mới:\n{e}")
+                root.after(0, lambda: messagebox.showinfo("Installer started", "Installer đã được mở. Ứng dụng sẽ đóng lại."))
+                root.after(200, lambda: root.destroy())
+            except Exception as e:
+                root.after(0, lambda: messagebox.showerror("Launch error", f"Không thể khởi chạy installer:\n{e}\nFile đã lưu ở:\n{save_path}"))
+
+        except Exception as e:
+            # cleanup partial file nếu có
+            try:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except:
+                pass
+            root.after(0, lambda: messagebox.showerror("Download error", f"Không tải được file mới:\n{e}"))
+        finally:
+            # đảm bảo dialog progress được đóng
+            try:
+                if prog_win:
+                    root.after(0, prog_win.destroy)
+            except:
+                pass
+
+    threading.Thread(target=worker, daemon=True).start()
 # ==== END CHECK UPDATE ====
 
 def open_installed_voice_app():
@@ -724,45 +866,75 @@ def open_installed_voice_app():
         print(f"Không thể mở ứng dụng: {e}")
 
 # ======================= GIAO DIỆN =======================
+# ======================= GIAO DIỆN (scrollable content + fixed footer) =======================
 root = tk.Tk()
-MIN_WIDTH = 743
-MIN_HEIGHT = 850
-root.geometry("743x600")
-root.minsize(MIN_WIDTH, MIN_HEIGHT)
+MIN_WIDTH = 760
+MIN_HEIGHT = 860
+root.geometry("760x860")
+# root.minsize(MIN_WIDTH, MIN_HEIGHT)
 root.configure(bg="#f0f7ff")
-root.resizable(True, True)
+root.resizable(False, True)
 refresh_version_info()
 
+# ----------------- Main container + scrollable canvas -----------------
+main_container = tk.Frame(root, bg="#f0f7ff")
+main_container.pack(side="top", fill="both", expand=True, pady=0, padx=0)
+
+canvas = tk.Canvas(main_container, bg="#f0f7ff", highlightthickness=0)
+v_scroll = tk.Scrollbar(main_container, orient="vertical", command=canvas.yview)
+canvas.configure(yscrollcommand=v_scroll.set)
+
+scrollable_frame = tk.Frame(canvas, bg="#f0f7ff")
+canvas_window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+canvas.pack(side="left", fill="both", expand=True)
+v_scroll.pack(side="right", fill="y")
+
+def _on_scrollable_config(event):
+    canvas.configure(scrollregion=canvas.bbox("all"))
+scrollable_frame.bind("<Configure>", _on_scrollable_config)
+
+def _on_canvas_config(event):
+    canvas.itemconfig(canvas_window_id, width=event.width)
+canvas.bind("<Configure>", _on_canvas_config)
+
+# Mouse wheel support
+def _on_mousewheel(event):
+    if sys.platform == 'darwin':
+        canvas.yview_scroll(int(-1 * (event.delta)), "units")
+    else:
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+# Bind mousewheel to canvas (works across platforms)
+canvas.bind_all("<MouseWheel>", _on_mousewheel)
+canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
+canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+
+# ----------------- Now create the UI widgets inside `scrollable_frame` -----------------
+
 # Style for LabelFrames
-frame_device = tk.LabelFrame(root, text="Device", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
+frame_device = tk.LabelFrame(scrollable_frame, text="Device", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
 frame_device.pack(pady=5, padx=10, fill="x")
 tk.Label(frame_device, text="🔧 Select device:", bg="#ffffff", fg="#003366", font=("Arial", 10, "bold")).pack(side="left", padx=5)
 combo_device = ttk.Combobox(frame_device, width=20, values=["GPP-3323", "Keysight"])
 combo_device.set("GPP-3323")
 combo_device.pack(side="left", padx=5)
 combo_device.bind("<<ComboboxSelected>>", on_device_change)
-# Nút Save Config ngay bên cạnh
 btn_save_config = tk.Button(frame_device, text="💾 Save Config", bg="#ccffcc", command=save_config)
 btn_save_config.pack(side="left", padx=10)
-
-# Nút Load Config
 btn_load_config = tk.Button(frame_device, text="📂 Load Config", bg="#cce6ff", command=load_config)
 btn_load_config.pack(side="left", padx=5)
-
-# Nút open voice app
 btn_voice = tk.Button(frame_device, text="🔊 Voice", bg="#cce6ff", command=open_installed_voice_app)
 btn_voice.pack(side="left", padx=5)
 
-frame_com = tk.LabelFrame(root, text="COM Connection", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
+frame_com = tk.LabelFrame(scrollable_frame, text="COM Connection", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
 frame_com.pack(pady=5, padx=10, fill="x")
 combo_com = ttk.Combobox(frame_com, width=15)
 combo_com.pack(side="left", padx=5)
-
 tk.Label(frame_com, text="Baudrate:", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
 combo_baud = ttk.Combobox(frame_com, width=10, values=[4800,9600,19200,38400,57600,115200])
 combo_baud.set(115200)
 combo_baud.pack(side="left", padx=5)
-
 btn_refresh = tk.Button(frame_com, text="🔄 Refresh", bg="#cce6ff", activebackground="#99ccff", command=refresh_com_list)
 btn_refresh.pack(side="left", padx=5)
 btn_connect = tk.Button(frame_com, text="🔌 Connect", bg="#ccffcc", activebackground="#99ff99", command=connect_com)
@@ -770,7 +942,7 @@ btn_connect.pack(side="left", padx=5)
 btn_disconnect = tk.Button(frame_com, text="❌ Disconnect", bg="#ffcccc", activebackground="#ff9999", command=disconnect_com)
 btn_disconnect.pack(side="left", padx=5)
 
-frame_current = tk.LabelFrame(root, text="Current Setting", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
+frame_current = tk.LabelFrame(scrollable_frame, text="Current Setting", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
 frame_current.pack(pady=5, padx=10, fill="x")
 tk.Label(frame_current, text="Current (A):", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
 entry_current = tk.Entry(frame_current, width=10, justify="center", bg="#f0fff0")
@@ -778,9 +950,8 @@ entry_current.pack(side="left", padx=5)
 entry_current.bind("<Return>", on_current_enter)
 entry_current.insert(0, "0.3")
 
-frame_status = tk.LabelFrame(root, text="📌 Status", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=10, pady=10)
+frame_status = tk.LabelFrame(scrollable_frame, text="📌 Status", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=10, pady=10)
 frame_status.pack(pady=10, fill="x", padx=20)
-
 lbl_status = tk.Label(frame_status, text="Not connected", fg="red", bg="#ffffff", font=("Arial", 11, "bold"))
 lbl_status.grid(row=0, column=0, sticky="w", pady=3)
 lbl_output = tk.Label(frame_status, text="⚡ Output unknown", fg="blue", bg="#ffffff", font=("Arial", 12, "bold"))
@@ -788,20 +959,16 @@ lbl_output.grid(row=1, column=0, sticky="w", pady=3)
 lbl_voltage = tk.Label(frame_status, text="⚡ Voltage: --", fg="#000000", bg="#ffffff", font=("Arial", 14, "bold"))
 lbl_voltage.grid(row=2, column=0, sticky="w", pady=3)
 
-# Main content frame (trên footer)
-frame_main = tk.Frame(root, bg="#f0f7ff")
-frame_main.pack(side="top", fill="both", expand=True, pady=5)
-
 # ================== TOP FRAMES ==================
-frame_top = tk.Frame(root, bg="#f0f7ff")
-frame_top.pack(side="top", fill="x", padx=10, pady=5)
+frame_top = tk.Frame(scrollable_frame, bg="#f0f7ff")
+frame_top.pack(side="top", fill="x", padx=10, pady=2)
 
 # Frame Mode
 frame_mode = tk.LabelFrame(frame_top, text="Select Mode",
                            bg="#ffffff", fg="#003366",
                            bd=2, relief="groove", width=300, height=150)
 frame_mode.pack_propagate(False)
-frame_mode.pack(side="left", padx=(5,2))
+frame_mode.pack(side="left", padx=(5,2), pady=0)
 
 mode_var = tk.IntVar(value=1)
 rb_mode1 = tk.Radiobutton(frame_mode, text="Mode 1: Default list",
@@ -835,8 +1002,8 @@ btn_toggle_resp = tk.Button(
     font=("Arial", 10, "bold"),
     command=toggle_read_response
 )
-btn_toggle_resp.grid(row=0, column=0, padx=10, pady=3)  # đặt cùng hàng với lbl_voltage
-update_toggle_button()  # cập nhật giao diện nút ngay khi tạo
+btn_toggle_resp.grid(row=0, column=0, padx=10, pady=3)
+update_toggle_button()
 
 # OVP
 tk.Label(frame_protection, text="OVP (V):", bg="#ffffff").grid(row=1, column=0, padx=5, pady=2)
@@ -861,8 +1028,10 @@ btn_ocp_off = tk.Button(frame_protection, text="OCP OFF", width=8, command=lambd
 btn_ocp_off.grid(row=2, column=3, padx=5, pady=2)
 
 # ================== BOTTOM FRAMES ==================
-frame_bottom = tk.Frame(root, bg="#f0f7ff")
-frame_bottom.pack(side="top", fill="both", expand=True, padx=10, pady=5)
+frame_bottom = tk.Frame(scrollable_frame, bg="#f0f7ff", height=335, width=250)
+frame_bottom.pack(side="top", fill="x", padx=10, pady=2)
+frame_bottom.pack_propagate(False)  # Ngăn Tkinter auto-resize theo nội dung
+
 # Left: Voltage list Mode 1
 frame_numboxs = tk.LabelFrame(frame_bottom, text="Voltage for Mode 1",
                               bg="#ffffff", fg="#003366",
@@ -877,41 +1046,36 @@ frame_auto_run.pack(pady=5)
 
 tk.Label(frame_auto_run, text="Delay (s):").grid(row=7, column=0, pady=5)
 delay_entry = tk.Entry(frame_auto_run, width=8, justify="center")
-delay_entry.insert(0, "5")  # Mặc định 5 giây
+delay_entry.insert(0, "5")
 delay_entry.grid(row=7, column=1, pady=5)
 
-btn_auto_run = tk.Button(frame_auto_run, text="▶ Auto Run", width=15, bg="#ffcccc",
-                         command=toggle_auto_run)
+btn_auto_run = tk.Button(frame_auto_run, text="▶ Auto Run", width=15, bg="#ffcccc", command=toggle_auto_run)
 btn_auto_run.grid(row=8, column=0, columnspan=3, pady=5)
-          
+
 tk.Label(frame_num_boxes, text="🔢 Number of boxes:", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
 combo_num_boxes = ttk.Combobox(frame_num_boxes, width=5, values=[2,3,4,5,6,7,8,9,10,18], state="normal")
 combo_num_boxes.set(NUM_VOLTAGE_BOXES)
 combo_num_boxes.pack(side="left", padx=5)
 
-# Tạo canvas và scrollbar
+# Tạo canvas và scrollbar cho các ô voltage (nếu cần)
 frame_mode1_canvas = tk.Canvas(frame_numboxs, bg="#ffffff", highlightthickness=0)
 scroll_y = tk.Scrollbar(frame_numboxs, orient="vertical", command=frame_mode1_canvas.yview)
 scroll_x = tk.Scrollbar(frame_numboxs, orient="horizontal", command=frame_mode1_canvas.xview)
 
 frame_mode1_canvas.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
 
-# Đặt scrollbar
 scroll_y.pack(side="right", fill="y")
 scroll_x.pack(side="bottom", fill="x")
 frame_mode1_canvas.pack(side="left", fill="both", expand=True)
 
-# Frame chứa các Entry
 frame_mode1_boxes = tk.Frame(frame_mode1_canvas, bg="#ffffff")
 frame_mode1_canvas.create_window((0,0), window=frame_mode1_boxes, anchor="nw")
 
-# Update scroll region
 frame_mode1_boxes.bind("<Configure>", lambda e: frame_mode1_canvas.configure(
     scrollregion=frame_mode1_canvas.bbox("all")
 ))
-# Sự kiện khi chọn từ danh sách
+
 combo_num_boxes.bind("<<ComboboxSelected>>", on_num_boxes_change)
-# Sự kiện khi nhấn Enter để nhập số
 combo_num_boxes.bind("<Return>", lambda event: on_num_boxes_change(event))
 build_voltage_entries(NUM_VOLTAGE_BOXES)
 
@@ -920,7 +1084,7 @@ frame_btn = tk.LabelFrame(frame_bottom, text="Voltage Adjustment",
                           bg="#ffffff", fg="#003366",
                           bd=2, relief="groove", width=250, height=300)
 frame_btn.pack_propagate(False)
-frame_btn.pack(side="left", fill="y", padx=5, pady=5)  # luôn cùng top, cao bằng frame_bottom
+frame_btn.pack(side="left", fill="y", padx=5, pady=5)
 
 tk.Button(frame_btn, text="⬆ Increase", width=10, bg="#cce6ff", command=increase_voltage).grid(row=0, column=1, padx=5, pady=5)
 tk.Button(frame_btn, text="⬇ Decrease", width=10, bg="#cce6ff", command=decrease_voltage).grid(row=2, column=1, padx=5, pady=5)
@@ -935,19 +1099,14 @@ tk.Button(frame_btn, text="▶ Step+", width=10, bg="#cce6ff", command=step_next
 reverse_var = tk.BooleanVar(value=False)
 tk.Checkbutton(frame_btn, text="🔁 Reverse direction", variable=reverse_var).grid(row=3, column=0, columnspan=3)
 
-tk.Button(frame_btn, text="⏩ Next voltage", width=20, bg="#e6e6fa", command=next_voltage)\
-    .grid(row=4, column=0, columnspan=3, pady=5)
-tk.Button(frame_btn, text="🔄 Reset mode", width=20, bg="#e6e6fa", command=reset_mode)\
-    .grid(row=5, column=0, columnspan=3, pady=5)
-tk.Button(frame_btn, text="🔄 Check for update", width=20, bg="#e6ffe6", command=check_update)\
-    .grid(row=6, column=0, columnspan=3, pady=5)
-tk.Button(frame_btn, text="❌ Exit", width=20, bg="#ffcccc", command=quit_app)\
-    .grid(row=7, column=0, columnspan=3, pady=5)
+tk.Button(frame_btn, text="⏩ Next voltage", width=20, bg="#e6e6fa", command=next_voltage).grid(row=4, column=0, columnspan=3, pady=5)
+tk.Button(frame_btn, text="🔄 Reset mode", width=20, bg="#e6e6fa", command=reset_mode).grid(row=5, column=0, columnspan=3, pady=5)
+tk.Button(frame_btn, text="🔄 Check for update", width=20, bg="#e6ffe6", command=check_update).grid(row=6, column=0, columnspan=3, pady=5)
+tk.Button(frame_btn, text="❌ Exit", width=20, bg="#ffcccc", command=quit_app).grid(row=7, column=0, columnspan=3, pady=5)
 
-
-# ================= Footer chuyên nghiệp =================
-footer_frame = tk.Frame(root, bg="#f0f7ff", height=20)
-footer_frame.pack_propagate(False)  # không co theo nội dung
+# ----------------- Footer (fixed at bottom) -----------------
+footer_frame = tk.Frame(root, bg="#f0f7ff", height=25)
+footer_frame.pack_propagate(False)
 footer_frame.pack(side="bottom", fill="x")
 
 # Dòng bản quyền
@@ -965,30 +1124,31 @@ lbl_copyright.pack(side="left", padx=5)
 def callback(url):
     webbrowser.open_new(url)
 
-# Link frame ở giữa
 link_frame = tk.Frame(footer_frame, bg="#f0f7ff")
-link_frame.pack(side="right", pady=2)  # top để canh giữa theo chiều ngang
+link_frame.pack(side="right", pady=2)
 
 def load_icon(path, size=None):
-    """Load icon từ path. Nếu size=None thì giữ nguyên, ngược lại resize."""
-    img = Image.open(resource_path(path))
-    if size:  # có yêu cầu resize
+    abs_path = resource_path(path)
+    try:
+        img = Image.open(abs_path)
+    except Exception as e:
+        print("Icon load failed:", abs_path, e)
+        img = Image.new("RGBA", (size or (20,20)), (200,200,200,0))
+    if size:
         img = img.resize(size, Image.LANCZOS)
     return ImageTk.PhotoImage(img)
 
-# Dùng chung một hàm
 fb_icon = load_icon("assets/icons8-facebook-48.png", (20, 20))
 linkedin_icon = load_icon("assets/icons8-linkedin-48.png", (20, 20))
 github_icon = load_icon("assets/icons8-github-32.png", (20, 20))
 
 def make_icon_link(parent, icon, url, tooltip=""):
     lbl = tk.Label(parent, image=icon, bg="#f0f7ff", cursor="hand2")
-    lbl.image = icon  # giữ reference tránh GC
+    lbl.image = icon
     lbl.pack(side="left", padx=8)
     lbl.bind("<Button-1>", lambda e: callback(url))
     return lbl
 
-# Tạo 3 icon link
 make_icon_link(link_frame, fb_icon, "https://www.facebook.com/bui.truong.902266")
 make_icon_link(link_frame, linkedin_icon, "https://www.linkedin.com/in/b%C3%B9i-tr%C6%B0%E1%BB%9Dng-embedded/")
 make_icon_link(link_frame, github_icon, "https://github.com/TruongBVD69")
@@ -1005,3 +1165,291 @@ lbl_version = tk.Label(
 lbl_version.pack(side="right", padx=5)
 
 root.mainloop()
+
+# root = tk.Tk()
+# MIN_WIDTH = 743
+# MIN_HEIGHT = 860
+# root.geometry("743x860")
+# root.minsize(MIN_WIDTH, MIN_HEIGHT)
+# root.configure(bg="#f0f7ff")
+# root.resizable(True, True)
+# refresh_version_info()
+
+# # Style for LabelFrames
+# frame_device = tk.LabelFrame(root, text="Device", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
+# frame_device.pack(pady=5, padx=10, fill="x")
+# tk.Label(frame_device, text="🔧 Select device:", bg="#ffffff", fg="#003366", font=("Arial", 10, "bold")).pack(side="left", padx=5)
+# combo_device = ttk.Combobox(frame_device, width=20, values=["GPP-3323", "Keysight"])
+# combo_device.set("GPP-3323")
+# combo_device.pack(side="left", padx=5)
+# combo_device.bind("<<ComboboxSelected>>", on_device_change)
+# # Nút Save Config ngay bên cạnh
+# btn_save_config = tk.Button(frame_device, text="💾 Save Config", bg="#ccffcc", command=save_config)
+# btn_save_config.pack(side="left", padx=10)
+
+# # Nút Load Config
+# btn_load_config = tk.Button(frame_device, text="📂 Load Config", bg="#cce6ff", command=load_config)
+# btn_load_config.pack(side="left", padx=5)
+
+# # Nút open voice app
+# btn_voice = tk.Button(frame_device, text="🔊 Voice", bg="#cce6ff", command=open_installed_voice_app)
+# btn_voice.pack(side="left", padx=5)
+
+# frame_com = tk.LabelFrame(root, text="COM Connection", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
+# frame_com.pack(pady=5, padx=10, fill="x")
+# combo_com = ttk.Combobox(frame_com, width=15)
+# combo_com.pack(side="left", padx=5)
+
+# tk.Label(frame_com, text="Baudrate:", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
+# combo_baud = ttk.Combobox(frame_com, width=10, values=[4800,9600,19200,38400,57600,115200])
+# combo_baud.set(115200)
+# combo_baud.pack(side="left", padx=5)
+
+# btn_refresh = tk.Button(frame_com, text="🔄 Refresh", bg="#cce6ff", activebackground="#99ccff", command=refresh_com_list)
+# btn_refresh.pack(side="left", padx=5)
+# btn_connect = tk.Button(frame_com, text="🔌 Connect", bg="#ccffcc", activebackground="#99ff99", command=connect_com)
+# btn_connect.pack(side="left", padx=5)
+# btn_disconnect = tk.Button(frame_com, text="❌ Disconnect", bg="#ffcccc", activebackground="#ff9999", command=disconnect_com)
+# btn_disconnect.pack(side="left", padx=5)
+
+# frame_current = tk.LabelFrame(root, text="Current Setting", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
+# frame_current.pack(pady=5, padx=10, fill="x")
+# tk.Label(frame_current, text="Current (A):", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
+# entry_current = tk.Entry(frame_current, width=10, justify="center", bg="#f0fff0")
+# entry_current.pack(side="left", padx=5)
+# entry_current.bind("<Return>", on_current_enter)
+# entry_current.insert(0, "0.3")
+
+# frame_status = tk.LabelFrame(root, text="📌 Status", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=10, pady=10)
+# frame_status.pack(pady=10, fill="x", padx=20)
+
+# lbl_status = tk.Label(frame_status, text="Not connected", fg="red", bg="#ffffff", font=("Arial", 11, "bold"))
+# lbl_status.grid(row=0, column=0, sticky="w", pady=3)
+# lbl_output = tk.Label(frame_status, text="⚡ Output unknown", fg="blue", bg="#ffffff", font=("Arial", 12, "bold"))
+# lbl_output.grid(row=1, column=0, sticky="w", pady=3)
+# lbl_voltage = tk.Label(frame_status, text="⚡ Voltage: --", fg="#000000", bg="#ffffff", font=("Arial", 14, "bold"))
+# lbl_voltage.grid(row=2, column=0, sticky="w", pady=3)
+
+# # Main content frame (trên footer)
+# frame_main = tk.Frame(root, bg="#f0f7ff")
+# frame_main.pack(side="top", fill="both", expand=True, pady=5)
+
+# # ================== TOP FRAMES ==================
+# frame_top = tk.Frame(root, bg="#f0f7ff")
+# frame_top.pack(side="top", fill="x", padx=10, pady=2)
+
+# # Frame Mode
+# frame_mode = tk.LabelFrame(frame_top, text="Select Mode",
+#                            bg="#ffffff", fg="#003366",
+#                            bd=2, relief="groove", width=300, height=150)
+# frame_mode.pack_propagate(False)
+# frame_mode.pack(side="left", padx=(5,2), pady=0)
+
+# mode_var = tk.IntVar(value=1)
+# rb_mode1 = tk.Radiobutton(frame_mode, text="Mode 1: Default list",
+#                           variable=mode_var, value=1,
+#                           bg="#ffffff", activebackground="#e6f2ff",
+#                           command=on_mode_change)
+# rb_mode1.pack(pady=5)
+
+# rb_mode2 = tk.Radiobutton(frame_mode, text="Mode 2: Manual input",
+#                           variable=mode_var, value=2,
+#                           bg="#ffffff", activebackground="#e6f2ff",
+#                           command=on_mode_change)
+# rb_mode2.pack(pady=5)
+
+# entry_custom_voltage = tk.Entry(frame_mode, bg="#f0fff0")
+# entry_custom_voltage.pack(pady=3)
+# entry_custom_voltage.bind("<Return>", on_custom_voltage_enter)
+
+# # Frame Protection
+# frame_protection = tk.LabelFrame(frame_top, text="OVP/OCP Protection",
+#                                  bg="#ffffff", fg="#003366",
+#                                  bd=2, relief="groove", width=300, height=150)
+# frame_protection.pack_propagate(False)
+# frame_protection.pack(side="left", padx=(2,5))
+
+# # Nút bật/tắt đọc phản hồi
+# btn_toggle_resp = tk.Button(
+#     frame_protection,
+#     text="Read Resp: ON",
+#     bg="lightgreen",
+#     font=("Arial", 10, "bold"),
+#     command=toggle_read_response
+# )
+# btn_toggle_resp.grid(row=0, column=0, padx=10, pady=3)  # đặt cùng hàng với lbl_voltage
+# update_toggle_button()  # cập nhật giao diện nút ngay khi tạo
+
+# # OVP
+# tk.Label(frame_protection, text="OVP (V):", bg="#ffffff").grid(row=1, column=0, padx=5, pady=2)
+# entry_ovp = tk.Entry(frame_protection, width=8, justify="center")
+# entry_ovp.grid(row=1, column=1, padx=5, pady=2)
+# entry_ovp.bind("<Return>", on_ovp_enter)
+# entry_ovp.insert(0, "5.0")
+# btn_ovp_on = tk.Button(frame_protection, text="OVP ON", width=8, command=lambda: set_ovp(True))
+# btn_ovp_on.grid(row=1, column=2, padx=5, pady=2)
+# btn_ovp_off = tk.Button(frame_protection, text="OVP OFF", width=8, command=lambda: set_ovp(False))
+# btn_ovp_off.grid(row=1, column=3, padx=5, pady=2)
+
+# # OCP
+# tk.Label(frame_protection, text="OCP (A):", bg="#ffffff").grid(row=2, column=0, padx=5, pady=2)
+# entry_ocp = tk.Entry(frame_protection, width=8, justify="center")
+# entry_ocp.grid(row=2, column=1, padx=5, pady=2)
+# entry_ocp.bind("<Return>", on_ocp_enter)
+# entry_ocp.insert(0, "0.3")
+# btn_ocp_on = tk.Button(frame_protection, text="OCP ON", width=8, command=lambda: set_ocp(True))
+# btn_ocp_on.grid(row=2, column=2, padx=5, pady=2)
+# btn_ocp_off = tk.Button(frame_protection, text="OCP OFF", width=8, command=lambda: set_ocp(False))
+# btn_ocp_off.grid(row=2, column=3, padx=5, pady=2)
+
+# # ================== BOTTOM FRAMES ==================
+# frame_bottom = tk.Frame(root, bg="#f0f7ff")
+# frame_bottom.pack(side="top", fill="both", expand=True, padx=10, pady=2)
+# # Left: Voltage list Mode 1
+# frame_numboxs = tk.LabelFrame(frame_bottom, text="Voltage for Mode 1",
+#                               bg="#ffffff", fg="#003366",
+#                               bd=2, relief="groove")
+# frame_numboxs.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+
+# frame_num_boxes = tk.Frame(frame_numboxs, bg="#ffffff")
+# frame_num_boxes.pack(pady=(5, 0))
+
+# frame_auto_run = tk.Frame(frame_numboxs, bg="#ffffff")
+# frame_auto_run.pack(pady=5)
+
+# tk.Label(frame_auto_run, text="Delay (s):").grid(row=7, column=0, pady=5)
+# delay_entry = tk.Entry(frame_auto_run, width=8, justify="center")
+# delay_entry.insert(0, "5")  # Mặc định 5 giây
+# delay_entry.grid(row=7, column=1, pady=5)
+
+# btn_auto_run = tk.Button(frame_auto_run, text="▶ Auto Run", width=15, bg="#ffcccc",
+#                          command=toggle_auto_run)
+# btn_auto_run.grid(row=8, column=0, columnspan=3, pady=5)
+          
+# tk.Label(frame_num_boxes, text="🔢 Number of boxes:", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
+# combo_num_boxes = ttk.Combobox(frame_num_boxes, width=5, values=[2,3,4,5,6,7,8,9,10,18], state="normal")
+# combo_num_boxes.set(NUM_VOLTAGE_BOXES)
+# combo_num_boxes.pack(side="left", padx=5)
+
+# # Tạo canvas và scrollbar
+# frame_mode1_canvas = tk.Canvas(frame_numboxs, bg="#ffffff", highlightthickness=0)
+# scroll_y = tk.Scrollbar(frame_numboxs, orient="vertical", command=frame_mode1_canvas.yview)
+# scroll_x = tk.Scrollbar(frame_numboxs, orient="horizontal", command=frame_mode1_canvas.xview)
+
+# frame_mode1_canvas.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+
+# # Đặt scrollbar
+# scroll_y.pack(side="right", fill="y")
+# scroll_x.pack(side="bottom", fill="x")
+# frame_mode1_canvas.pack(side="left", fill="both", expand=True)
+
+# # Frame chứa các Entry
+# frame_mode1_boxes = tk.Frame(frame_mode1_canvas, bg="#ffffff")
+# frame_mode1_canvas.create_window((0,0), window=frame_mode1_boxes, anchor="nw")
+
+# # Update scroll region
+# frame_mode1_boxes.bind("<Configure>", lambda e: frame_mode1_canvas.configure(
+#     scrollregion=frame_mode1_canvas.bbox("all")
+# ))
+# # Sự kiện khi chọn từ danh sách
+# combo_num_boxes.bind("<<ComboboxSelected>>", on_num_boxes_change)
+# # Sự kiện khi nhấn Enter để nhập số
+# combo_num_boxes.bind("<Return>", lambda event: on_num_boxes_change(event))
+# build_voltage_entries(NUM_VOLTAGE_BOXES)
+
+# # ---------- Frame Voltage Adjustment ----------
+# frame_btn = tk.LabelFrame(frame_bottom, text="Voltage Adjustment",
+#                           bg="#ffffff", fg="#003366",
+#                           bd=2, relief="groove", width=250, height=300)
+# frame_btn.pack_propagate(False)
+# frame_btn.pack(side="left", fill="y", padx=5, pady=5)  # luôn cùng top, cao bằng frame_bottom
+
+# tk.Button(frame_btn, text="⬆ Increase", width=10, bg="#cce6ff", command=increase_voltage).grid(row=0, column=1, padx=5, pady=5)
+# tk.Button(frame_btn, text="⬇ Decrease", width=10, bg="#cce6ff", command=decrease_voltage).grid(row=2, column=1, padx=5, pady=5)
+# tk.Button(frame_btn, text="◀ Step-", width=10, bg="#cce6ff", command=step_prev).grid(row=1, column=0, padx=5, pady=5)
+
+# lbl_step = tk.Label(frame_btn, text=f"Step: {voltage_step}", width=12,
+#                     bg="#ffffcc", relief="solid", bd=1.2, font=("Arial", 12))
+# lbl_step.grid(row=1, column=1, padx=5, pady=5)
+
+# tk.Button(frame_btn, text="▶ Step+", width=10, bg="#cce6ff", command=step_next).grid(row=1, column=2, padx=5, pady=5)
+
+# reverse_var = tk.BooleanVar(value=False)
+# tk.Checkbutton(frame_btn, text="🔁 Reverse direction", variable=reverse_var).grid(row=3, column=0, columnspan=3)
+
+# tk.Button(frame_btn, text="⏩ Next voltage", width=20, bg="#e6e6fa", command=next_voltage)\
+#     .grid(row=4, column=0, columnspan=3, pady=5)
+# tk.Button(frame_btn, text="🔄 Reset mode", width=20, bg="#e6e6fa", command=reset_mode)\
+#     .grid(row=5, column=0, columnspan=3, pady=5)
+# tk.Button(frame_btn, text="🔄 Check for update", width=20, bg="#e6ffe6", command=check_update)\
+#     .grid(row=6, column=0, columnspan=3, pady=5)
+# tk.Button(frame_btn, text="❌ Exit", width=20, bg="#ffcccc", command=quit_app)\
+#     .grid(row=7, column=0, columnspan=3, pady=5)
+
+
+# # ================= Footer chuyên nghiệp =================
+# footer_frame = tk.Frame(root, bg="#f0f7ff", height=40)
+# footer_frame.pack_propagate(False)
+# footer_frame.pack(side="bottom", fill="x")
+
+# # Dòng bản quyền
+# copyright_text = "© 2025 BuiVuDuyTruong-Embedded. All rights reserved."
+# lbl_copyright = tk.Label(
+#     footer_frame,
+#     text=copyright_text,
+#     bg="#f0f7ff",
+#     fg="#555555",
+#     font=("Arial", 8)
+# )
+# lbl_copyright.pack(side="left", padx=5)
+
+# # ==== LINK AREA ====
+# def callback(url):
+#     webbrowser.open_new(url)
+
+# # Link frame ở giữa
+# link_frame = tk.Frame(footer_frame, bg="#f0f7ff")
+# link_frame.pack(side="right", pady=2)  # top để canh giữa theo chiều ngang
+
+# def load_icon(path, size=None):
+#     """Load icon từ path. Nếu size=None thì giữ nguyên, ngược lại resize."""
+#     abs_path = resource_path(path)
+#     try:
+#         img = Image.open(abs_path)
+#     except Exception as e:
+#         print("Icon load failed:", abs_path, e)
+#         # fallback: create a blank image
+#         img = Image.new("RGBA", (size or (20,20)), (200,200,200,0))
+#     if size:
+#         img = img.resize(size, Image.LANCZOS)
+#     return ImageTk.PhotoImage(img)
+
+# # Dùng chung một hàm
+# fb_icon = load_icon("assets/icons8-facebook-48.png", (20, 20))
+# linkedin_icon = load_icon("assets/icons8-linkedin-48.png", (20, 20))
+# github_icon = load_icon("assets/icons8-github-32.png", (20, 20))
+
+# def make_icon_link(parent, icon, url, tooltip=""):
+#     lbl = tk.Label(parent, image=icon, bg="#f0f7ff", cursor="hand2")
+#     lbl.image = icon  # giữ reference tránh GC
+#     lbl.pack(side="left", padx=8)
+#     lbl.bind("<Button-1>", lambda e: callback(url))
+#     return lbl
+
+# # Tạo 3 icon link
+# make_icon_link(link_frame, fb_icon, "https://www.facebook.com/bui.truong.902266")
+# make_icon_link(link_frame, linkedin_icon, "https://www.linkedin.com/in/b%C3%B9i-tr%C6%B0%E1%BB%9Dng-embedded/")
+# make_icon_link(link_frame, github_icon, "https://github.com/TruongBVD69")
+
+# # Phiên bản app
+# app_version_text = f"Version: {CURRENT_VERSION}"
+# lbl_version = tk.Label(
+#     footer_frame,
+#     text=app_version_text,
+#     bg="#f0f7ff",
+#     fg="#555555",
+#     font=("Arial", 8)
+# )
+# lbl_version.pack(side="right", padx=5)
+
+# root.mainloop()
