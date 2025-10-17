@@ -1,6 +1,6 @@
 ; Script tạo installer cho My GPP-3323 Controller
 ; #define ProjectDir ExtractFileDir(__FILE__) + "\"
-#define MyAppVersion "2.1.6"
+#define MyAppVersion "2.2"
 #define MyAppName "PowerSupply Controller"
 
 [Setup]

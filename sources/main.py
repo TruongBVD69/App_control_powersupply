@@ -17,6 +17,7 @@ from PIL import Image, ImageTk
 import threading
 from urllib.parse import urlparse
 import shutil
+import math
 
 # ======================= BIẾN TOÀN CỤC =======================
 GITHUB_API_LATEST_RELEASE = "https://api.github.com/repos/TruongBVD69/App_control_powersupply/releases/latest"
@@ -57,6 +58,14 @@ auto_running = False
 device_type = "GPP"  # GPP hoặc Keysight
 
 read_response_enabled = False  # mặc định tắt đọc phản hồi
+
+# Range mode globals
+range_running = False
+range_after_id = None
+range_current = None   # <-- None khi chưa khởi chạy lần nào
+range_start = 0.0
+range_end = 0.0
+range_delay_ms = 200  # default
 
 def resource_path(relative_path: str) -> str:
     """Get absolute path to resource, works for dev and PyInstaller"""
@@ -142,7 +151,6 @@ def set_voltage(v):
     else:
         readv = "--"  # nếu chưa chọn loại máy
 
-    time.sleep(0.01)
     if read_response_enabled:  # chỉ đọc khi được bật
         readv = send_cmd('MEAS:VOLT?')
     else:
@@ -247,7 +255,6 @@ def next_voltage():
         index = (index + 1) % len(list_volt)
 
     set_voltage(list_volt[index])
-    time.sleep(0.01)
 
 def step_next():
     global step_index, voltage_step
@@ -485,6 +492,147 @@ def quit_app():
         ser.close()
     root.destroy()
 
+# ======================= Hàm thực thi cho range mode =======================
+def _range_reached(a, b, step):
+    """Trả True nếu a đã tiến đến (hoặc vượt) b theo hướng step (cân nhắc làm tròn)."""
+    if step > 0:
+        return a >= b - 1e-9
+    else:
+        return a <= b + 1e-9
+
+def range_stepper():
+    """Hàm nội bộ chạy 1 bước, sau đó schedule bước tiếp theo bằng root.after."""
+    global range_running, range_after_id, range_current, range_end, range_delay_ms, voltage_step, range_start
+
+    if not range_running:
+        return
+
+    # Gửi điện áp hiện tại
+    set_voltage(range_current)
+
+    # Xác định điểm đích thực tế và hướng step tùy reverse_var
+    if reverse_var.get():
+        effective_end = range_start      # chạy ngược: đích là start
+    else:
+        effective_end = range_end        # bình thường: đích là end
+
+    # Tính bước actual (+ hoặc -)
+    if effective_end < range_current:
+        step_val = -abs(voltage_step)
+    else:
+        step_val = abs(voltage_step)
+
+    # Nếu user bật reverse_var, hướng đã được tính bằng effective_end so với range_current,
+    # nên không cần đảo thêm ở đây.
+
+    # Kiểm tra đã đạt end chưa
+    if _range_reached(range_current, effective_end, step_val):
+        # đặt đúng end cuối cùng (effective_end)
+        set_voltage(effective_end)
+        range_running = False
+        range_after_id = None
+        lbl_status.config(text=f"Range done ({range_start} → {range_end})", fg="green")
+        btn_range_start.config(text="▶ Start Range", bg="#ccffcc")
+        return
+
+    # Tính giá trị tiếp theo
+    next_v = range_current + step_val
+
+    # Prevent overshoot: nếu next vượt quá effective_end theo chiều step thì gán effective_end
+    if (step_val > 0 and next_v > effective_end) or (step_val < 0 and next_v < effective_end):
+        next_v = effective_end
+
+    range_current = round(next_v, 6)  # giữ chút precision
+    # schedule next
+    range_after_id = root.after(range_delay_ms, range_stepper)
+
+
+def start_range_mode():
+    """Bắt đầu chạy range mode (tôn trọng resume_var và reverse_var)."""
+    global range_running, range_current, range_start, range_end, range_delay_ms, range_after_id
+
+    if range_running:
+        return
+
+    # Lấy input từ entry_range_start/entry_range_end/entry_range_delay
+    try:
+        s = float(entry_range_start.get().strip())
+        e = float(entry_range_end.get().strip())
+        d = int(entry_range_delay.get().strip())  # ms
+    except Exception:
+        messagebox.showerror("Error", "Please enter valid numeric values for start, end and delay (ms).")
+        return
+
+    if d <= 0:
+        messagebox.showerror("Error", "Delay must be positive (ms).")
+        return
+
+    if math.isclose(s, e, rel_tol=1e-9, abs_tol=1e-9):
+        messagebox.showinfo("Info", "Start and end are equal — nothing to run.")
+        return
+
+    # Cập nhật tham số range (nhưng KHÔNG ép range_current về start ở đây)
+    range_start = s
+    range_end = e
+    range_delay_ms = d
+
+    # Xác định effective_end và effective_start_point theo reverse_var
+    if reverse_var.get():
+        effective_end = range_start
+        effective_start_point = range_end   # nếu không resume thì bắt đầu từ range_end
+    else:
+        effective_end = range_end
+        effective_start_point = range_start # nếu không resume thì bắt đầu từ range_start
+
+    # Kiểm tra range_current hợp lệ (nằm trong khoảng min..max của [range_start, range_end])
+    eps = 1e-9
+    in_range = False
+    if range_current is not None:
+        lo, hi = min(range_start, range_end) - eps, max(range_start, range_end) + eps
+        if lo <= range_current <= hi:
+            in_range = True
+
+    # Tính step_dir dùng để kiểm tra đã tới đích chưa
+    step_dir = voltage_step if effective_end >= (range_current if range_current is not None else effective_start_point) else -voltage_step
+
+    if resume_var.get() and in_range and not _range_reached(range_current, effective_end, step_dir):
+        # resume từ range_current (không thay đổi range_current)
+        start_from = range_current
+    else:
+        # start lại từ effective_start_point (phụ thuộc reverse)
+        start_from = effective_start_point
+        range_current = start_from
+
+    range_running = True
+    btn_range_start.config(text="⏸ Stop Range", bg="#ffcc99")
+    lbl_status.config(text=f"Range running: {start_from} → {effective_end}, step {voltage_step}", fg="blue")
+
+    # call first step immediately
+    range_after_id = root.after(0, range_stepper)
+
+
+def stop_range_mode():
+    """Dừng range mode nếu đang chạy."""
+    global range_running, range_after_id
+    if not range_running:
+        return
+    range_running = False
+    if range_after_id:
+        try:
+            root.after_cancel(range_after_id)
+        except Exception:
+            pass
+    range_after_id = None
+    btn_range_start.config(text="▶ Start Range", bg="#ccffcc")
+    lbl_status.config(text="Range stopped", fg="red")
+
+# toggle handler for the button created earlier
+def toggle_range():
+    if range_running:
+        stop_range_mode()
+    else:
+        start_range_mode()
+
 # ======================= KẾT NỐI COM =======================
 def refresh_com_list():
     ports = [p.device for p in serial.tools.list_ports.comports()]
@@ -604,10 +752,29 @@ def on_num_boxes_change(event=None):
     except:
         pass
 
-def on_mode_change():
+def on_mode_change(event=None):
     global mode_selected
     mode_selected = mode_var.get()
-    apply_mode()
+
+    # ẩn cả 2 trước
+    try: frame_numboxs.pack_forget()
+    except: pass
+    try: frame_mode3.pack_forget()
+    except: pass
+
+    if mode_selected == 1:
+        frame_numboxs.pack(fill="both", expand=True, padx=5, pady=5)
+        lbl_status.config(text="Mode 1: Default list", fg="black")
+        apply_mode()
+    elif mode_selected == 2:
+        # không show left-holder nội dung (manual input)
+        lbl_status.config(text="Mode 2: Manual input", fg="black")
+        apply_mode()
+    elif mode_selected == 3:
+        frame_mode3.pack(fill="both", expand=True, padx=5, pady=5)
+        lbl_status.config(text="Mode 3: Range mode", fg="black")
+    else:
+        lbl_status.config(text="Unknown mode", fg="orange")
 
 def on_custom_voltage_enter(event=None):
     if mode_selected == 2 and ser and ser.is_open:
@@ -865,13 +1032,12 @@ def open_installed_voice_app():
     except Exception as e:
         print(f"Không thể mở ứng dụng: {e}")
 
-# ======================= GIAO DIỆN =======================
 # ======================= GIAO DIỆN (scrollable content + fixed footer) =======================
 root = tk.Tk()
 MIN_WIDTH = 760
-MIN_HEIGHT = 860
+MIN_HEIGHT = 300
 root.geometry("760x860")
-# root.minsize(MIN_WIDTH, MIN_HEIGHT)
+root.minsize(MIN_WIDTH, MIN_HEIGHT)
 root.configure(bg="#f0f7ff")
 root.resizable(False, True)
 refresh_version_info()
@@ -906,7 +1072,8 @@ def _on_mousewheel(event):
         canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
 # Bind mousewheel to canvas (works across platforms)
-canvas.bind_all("<MouseWheel>", _on_mousewheel)
+canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
 canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
 
@@ -983,6 +1150,13 @@ rb_mode2 = tk.Radiobutton(frame_mode, text="Mode 2: Manual input",
                           command=on_mode_change)
 rb_mode2.pack(pady=5)
 
+# NEW: Mode 3
+rb_mode3 = tk.Radiobutton(frame_mode, text="Mode 3: Range Mode",
+                          variable=mode_var, value=3,
+                          bg="#ffffff", activebackground="#e6f2ff",
+                          command=on_mode_change)
+rb_mode3.pack(pady=5)
+
 entry_custom_voltage = tk.Entry(frame_mode, bg="#f0fff0")
 entry_custom_voltage.pack(pady=3)
 entry_custom_voltage.bind("<Return>", on_custom_voltage_enter)
@@ -1028,15 +1202,56 @@ btn_ocp_off = tk.Button(frame_protection, text="OCP OFF", width=8, command=lambd
 btn_ocp_off.grid(row=2, column=3, padx=5, pady=2)
 
 # ================== BOTTOM FRAMES ==================
-frame_bottom = tk.Frame(scrollable_frame, bg="#f0f7ff", height=335, width=250)
+frame_bottom = tk.Frame(scrollable_frame, bg="#f0f7ff", height=335)
 frame_bottom.pack(side="top", fill="x", padx=10, pady=2)
-frame_bottom.pack_propagate(False)  # Ngăn Tkinter auto-resize theo nội dung
+# nếu muốn cố định chiều cao thì giữ pack_propagate(False)
+frame_bottom.pack_propagate(False)
+
+# --- NEW: left holder (cố định bên trái) ---
+left_holder = tk.Frame(frame_bottom, bg="#f0f7ff")
+left_holder.pack(side="left", fill="both", expand=True, padx=5, pady=5)
 
 # Left: Voltage list Mode 1
-frame_numboxs = tk.LabelFrame(frame_bottom, text="Voltage for Mode 1",
+frame_numboxs = tk.LabelFrame(left_holder, text="Voltage for Mode 1",
                               bg="#ffffff", fg="#003366",
                               bd=2, relief="groove")
-frame_numboxs.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+frame_numboxs.pack(fill="both", expand=True, padx=5, pady=5)   # shown by default
+
+# Mode3 is also child of left_holder but NOT packed at start
+frame_mode3 = tk.LabelFrame(left_holder, text="Range Mode (Mode 3)",
+                            bg="#ffffff", fg="#003366",
+                            bd=2, relief="groove")
+# do not pack frame_mode3 now, we'll pack it when mode 3 selected
+
+# inside frame_mode3: controls for start, end, delay and a start/stop button
+tk.Label(frame_mode3, text="Start (V):", bg="#ffffff").grid(row=0, column=0, padx=5, pady=4, sticky="e")
+entry_range_start = tk.Entry(frame_mode3, width=10, justify="center")
+entry_range_start.grid(row=0, column=1, padx=5, pady=4)
+entry_range_start.insert(0, "1.000")
+
+tk.Label(frame_mode3, text="End (V):", bg="#ffffff").grid(row=1, column=0, padx=5, pady=4, sticky="e")
+entry_range_end = tk.Entry(frame_mode3, width=10, justify="center")
+entry_range_end.grid(row=1, column=1, padx=5, pady=4)
+entry_range_end.insert(0, "3.000")
+
+tk.Label(frame_mode3, text="Delay (ms):", bg="#ffffff").grid(row=2, column=0, padx=5, pady=4, sticky="e")
+entry_range_delay = tk.Entry(frame_mode3, width=10, justify="center")
+entry_range_delay.grid(row=2, column=1, padx=5, pady=4)
+entry_range_delay.insert(0, "200")
+
+# Use existing voltage_step variable. If you want separate step for mode3,
+# add entry or reuse lbl_step / step_index controls. For now we'll use voltage_step.
+tk.Label(frame_mode3, text="Step (uses current Step):", bg="#ffffff").grid(row=3, column=0, columnspan=2, padx=5, pady=(2,6))
+
+# biến resume
+resume_var = tk.BooleanVar(value=True)
+chk_resume = tk.Checkbutton(frame_mode3, text="Resume from current (if stopped)", variable=resume_var,
+                            bg="#ffffff", anchor="w")
+chk_resume.grid(row=4, column=0, columnspan=2, sticky="w", padx=5, pady=(0,6))
+
+# Start/Stop button for range mode; _toggle_range must exist (we'll add functions later)
+btn_range_start = tk.Button(frame_mode3, text="▶ Start Range", bg="#ccffcc", width=20, command=toggle_range)
+btn_range_start.grid(row=5, column=0, columnspan=2, padx=5, pady=6)
 
 frame_num_boxes = tk.Frame(frame_numboxs, bg="#ffffff")
 frame_num_boxes.pack(pady=(5, 0))
@@ -1165,291 +1380,3 @@ lbl_version = tk.Label(
 lbl_version.pack(side="right", padx=5)
 
 root.mainloop()
-
-# root = tk.Tk()
-# MIN_WIDTH = 743
-# MIN_HEIGHT = 860
-# root.geometry("743x860")
-# root.minsize(MIN_WIDTH, MIN_HEIGHT)
-# root.configure(bg="#f0f7ff")
-# root.resizable(True, True)
-# refresh_version_info()
-
-# # Style for LabelFrames
-# frame_device = tk.LabelFrame(root, text="Device", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
-# frame_device.pack(pady=5, padx=10, fill="x")
-# tk.Label(frame_device, text="🔧 Select device:", bg="#ffffff", fg="#003366", font=("Arial", 10, "bold")).pack(side="left", padx=5)
-# combo_device = ttk.Combobox(frame_device, width=20, values=["GPP-3323", "Keysight"])
-# combo_device.set("GPP-3323")
-# combo_device.pack(side="left", padx=5)
-# combo_device.bind("<<ComboboxSelected>>", on_device_change)
-# # Nút Save Config ngay bên cạnh
-# btn_save_config = tk.Button(frame_device, text="💾 Save Config", bg="#ccffcc", command=save_config)
-# btn_save_config.pack(side="left", padx=10)
-
-# # Nút Load Config
-# btn_load_config = tk.Button(frame_device, text="📂 Load Config", bg="#cce6ff", command=load_config)
-# btn_load_config.pack(side="left", padx=5)
-
-# # Nút open voice app
-# btn_voice = tk.Button(frame_device, text="🔊 Voice", bg="#cce6ff", command=open_installed_voice_app)
-# btn_voice.pack(side="left", padx=5)
-
-# frame_com = tk.LabelFrame(root, text="COM Connection", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
-# frame_com.pack(pady=5, padx=10, fill="x")
-# combo_com = ttk.Combobox(frame_com, width=15)
-# combo_com.pack(side="left", padx=5)
-
-# tk.Label(frame_com, text="Baudrate:", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
-# combo_baud = ttk.Combobox(frame_com, width=10, values=[4800,9600,19200,38400,57600,115200])
-# combo_baud.set(115200)
-# combo_baud.pack(side="left", padx=5)
-
-# btn_refresh = tk.Button(frame_com, text="🔄 Refresh", bg="#cce6ff", activebackground="#99ccff", command=refresh_com_list)
-# btn_refresh.pack(side="left", padx=5)
-# btn_connect = tk.Button(frame_com, text="🔌 Connect", bg="#ccffcc", activebackground="#99ff99", command=connect_com)
-# btn_connect.pack(side="left", padx=5)
-# btn_disconnect = tk.Button(frame_com, text="❌ Disconnect", bg="#ffcccc", activebackground="#ff9999", command=disconnect_com)
-# btn_disconnect.pack(side="left", padx=5)
-
-# frame_current = tk.LabelFrame(root, text="Current Setting", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=5, pady=5)
-# frame_current.pack(pady=5, padx=10, fill="x")
-# tk.Label(frame_current, text="Current (A):", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
-# entry_current = tk.Entry(frame_current, width=10, justify="center", bg="#f0fff0")
-# entry_current.pack(side="left", padx=5)
-# entry_current.bind("<Return>", on_current_enter)
-# entry_current.insert(0, "0.3")
-
-# frame_status = tk.LabelFrame(root, text="📌 Status", bg="#ffffff", fg="#003366", bd=2, relief="groove", padx=10, pady=10)
-# frame_status.pack(pady=10, fill="x", padx=20)
-
-# lbl_status = tk.Label(frame_status, text="Not connected", fg="red", bg="#ffffff", font=("Arial", 11, "bold"))
-# lbl_status.grid(row=0, column=0, sticky="w", pady=3)
-# lbl_output = tk.Label(frame_status, text="⚡ Output unknown", fg="blue", bg="#ffffff", font=("Arial", 12, "bold"))
-# lbl_output.grid(row=1, column=0, sticky="w", pady=3)
-# lbl_voltage = tk.Label(frame_status, text="⚡ Voltage: --", fg="#000000", bg="#ffffff", font=("Arial", 14, "bold"))
-# lbl_voltage.grid(row=2, column=0, sticky="w", pady=3)
-
-# # Main content frame (trên footer)
-# frame_main = tk.Frame(root, bg="#f0f7ff")
-# frame_main.pack(side="top", fill="both", expand=True, pady=5)
-
-# # ================== TOP FRAMES ==================
-# frame_top = tk.Frame(root, bg="#f0f7ff")
-# frame_top.pack(side="top", fill="x", padx=10, pady=2)
-
-# # Frame Mode
-# frame_mode = tk.LabelFrame(frame_top, text="Select Mode",
-#                            bg="#ffffff", fg="#003366",
-#                            bd=2, relief="groove", width=300, height=150)
-# frame_mode.pack_propagate(False)
-# frame_mode.pack(side="left", padx=(5,2), pady=0)
-
-# mode_var = tk.IntVar(value=1)
-# rb_mode1 = tk.Radiobutton(frame_mode, text="Mode 1: Default list",
-#                           variable=mode_var, value=1,
-#                           bg="#ffffff", activebackground="#e6f2ff",
-#                           command=on_mode_change)
-# rb_mode1.pack(pady=5)
-
-# rb_mode2 = tk.Radiobutton(frame_mode, text="Mode 2: Manual input",
-#                           variable=mode_var, value=2,
-#                           bg="#ffffff", activebackground="#e6f2ff",
-#                           command=on_mode_change)
-# rb_mode2.pack(pady=5)
-
-# entry_custom_voltage = tk.Entry(frame_mode, bg="#f0fff0")
-# entry_custom_voltage.pack(pady=3)
-# entry_custom_voltage.bind("<Return>", on_custom_voltage_enter)
-
-# # Frame Protection
-# frame_protection = tk.LabelFrame(frame_top, text="OVP/OCP Protection",
-#                                  bg="#ffffff", fg="#003366",
-#                                  bd=2, relief="groove", width=300, height=150)
-# frame_protection.pack_propagate(False)
-# frame_protection.pack(side="left", padx=(2,5))
-
-# # Nút bật/tắt đọc phản hồi
-# btn_toggle_resp = tk.Button(
-#     frame_protection,
-#     text="Read Resp: ON",
-#     bg="lightgreen",
-#     font=("Arial", 10, "bold"),
-#     command=toggle_read_response
-# )
-# btn_toggle_resp.grid(row=0, column=0, padx=10, pady=3)  # đặt cùng hàng với lbl_voltage
-# update_toggle_button()  # cập nhật giao diện nút ngay khi tạo
-
-# # OVP
-# tk.Label(frame_protection, text="OVP (V):", bg="#ffffff").grid(row=1, column=0, padx=5, pady=2)
-# entry_ovp = tk.Entry(frame_protection, width=8, justify="center")
-# entry_ovp.grid(row=1, column=1, padx=5, pady=2)
-# entry_ovp.bind("<Return>", on_ovp_enter)
-# entry_ovp.insert(0, "5.0")
-# btn_ovp_on = tk.Button(frame_protection, text="OVP ON", width=8, command=lambda: set_ovp(True))
-# btn_ovp_on.grid(row=1, column=2, padx=5, pady=2)
-# btn_ovp_off = tk.Button(frame_protection, text="OVP OFF", width=8, command=lambda: set_ovp(False))
-# btn_ovp_off.grid(row=1, column=3, padx=5, pady=2)
-
-# # OCP
-# tk.Label(frame_protection, text="OCP (A):", bg="#ffffff").grid(row=2, column=0, padx=5, pady=2)
-# entry_ocp = tk.Entry(frame_protection, width=8, justify="center")
-# entry_ocp.grid(row=2, column=1, padx=5, pady=2)
-# entry_ocp.bind("<Return>", on_ocp_enter)
-# entry_ocp.insert(0, "0.3")
-# btn_ocp_on = tk.Button(frame_protection, text="OCP ON", width=8, command=lambda: set_ocp(True))
-# btn_ocp_on.grid(row=2, column=2, padx=5, pady=2)
-# btn_ocp_off = tk.Button(frame_protection, text="OCP OFF", width=8, command=lambda: set_ocp(False))
-# btn_ocp_off.grid(row=2, column=3, padx=5, pady=2)
-
-# # ================== BOTTOM FRAMES ==================
-# frame_bottom = tk.Frame(root, bg="#f0f7ff")
-# frame_bottom.pack(side="top", fill="both", expand=True, padx=10, pady=2)
-# # Left: Voltage list Mode 1
-# frame_numboxs = tk.LabelFrame(frame_bottom, text="Voltage for Mode 1",
-#                               bg="#ffffff", fg="#003366",
-#                               bd=2, relief="groove")
-# frame_numboxs.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-
-# frame_num_boxes = tk.Frame(frame_numboxs, bg="#ffffff")
-# frame_num_boxes.pack(pady=(5, 0))
-
-# frame_auto_run = tk.Frame(frame_numboxs, bg="#ffffff")
-# frame_auto_run.pack(pady=5)
-
-# tk.Label(frame_auto_run, text="Delay (s):").grid(row=7, column=0, pady=5)
-# delay_entry = tk.Entry(frame_auto_run, width=8, justify="center")
-# delay_entry.insert(0, "5")  # Mặc định 5 giây
-# delay_entry.grid(row=7, column=1, pady=5)
-
-# btn_auto_run = tk.Button(frame_auto_run, text="▶ Auto Run", width=15, bg="#ffcccc",
-#                          command=toggle_auto_run)
-# btn_auto_run.grid(row=8, column=0, columnspan=3, pady=5)
-          
-# tk.Label(frame_num_boxes, text="🔢 Number of boxes:", bg="#ffffff", fg="#003366").pack(side="left", padx=5)
-# combo_num_boxes = ttk.Combobox(frame_num_boxes, width=5, values=[2,3,4,5,6,7,8,9,10,18], state="normal")
-# combo_num_boxes.set(NUM_VOLTAGE_BOXES)
-# combo_num_boxes.pack(side="left", padx=5)
-
-# # Tạo canvas và scrollbar
-# frame_mode1_canvas = tk.Canvas(frame_numboxs, bg="#ffffff", highlightthickness=0)
-# scroll_y = tk.Scrollbar(frame_numboxs, orient="vertical", command=frame_mode1_canvas.yview)
-# scroll_x = tk.Scrollbar(frame_numboxs, orient="horizontal", command=frame_mode1_canvas.xview)
-
-# frame_mode1_canvas.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
-
-# # Đặt scrollbar
-# scroll_y.pack(side="right", fill="y")
-# scroll_x.pack(side="bottom", fill="x")
-# frame_mode1_canvas.pack(side="left", fill="both", expand=True)
-
-# # Frame chứa các Entry
-# frame_mode1_boxes = tk.Frame(frame_mode1_canvas, bg="#ffffff")
-# frame_mode1_canvas.create_window((0,0), window=frame_mode1_boxes, anchor="nw")
-
-# # Update scroll region
-# frame_mode1_boxes.bind("<Configure>", lambda e: frame_mode1_canvas.configure(
-#     scrollregion=frame_mode1_canvas.bbox("all")
-# ))
-# # Sự kiện khi chọn từ danh sách
-# combo_num_boxes.bind("<<ComboboxSelected>>", on_num_boxes_change)
-# # Sự kiện khi nhấn Enter để nhập số
-# combo_num_boxes.bind("<Return>", lambda event: on_num_boxes_change(event))
-# build_voltage_entries(NUM_VOLTAGE_BOXES)
-
-# # ---------- Frame Voltage Adjustment ----------
-# frame_btn = tk.LabelFrame(frame_bottom, text="Voltage Adjustment",
-#                           bg="#ffffff", fg="#003366",
-#                           bd=2, relief="groove", width=250, height=300)
-# frame_btn.pack_propagate(False)
-# frame_btn.pack(side="left", fill="y", padx=5, pady=5)  # luôn cùng top, cao bằng frame_bottom
-
-# tk.Button(frame_btn, text="⬆ Increase", width=10, bg="#cce6ff", command=increase_voltage).grid(row=0, column=1, padx=5, pady=5)
-# tk.Button(frame_btn, text="⬇ Decrease", width=10, bg="#cce6ff", command=decrease_voltage).grid(row=2, column=1, padx=5, pady=5)
-# tk.Button(frame_btn, text="◀ Step-", width=10, bg="#cce6ff", command=step_prev).grid(row=1, column=0, padx=5, pady=5)
-
-# lbl_step = tk.Label(frame_btn, text=f"Step: {voltage_step}", width=12,
-#                     bg="#ffffcc", relief="solid", bd=1.2, font=("Arial", 12))
-# lbl_step.grid(row=1, column=1, padx=5, pady=5)
-
-# tk.Button(frame_btn, text="▶ Step+", width=10, bg="#cce6ff", command=step_next).grid(row=1, column=2, padx=5, pady=5)
-
-# reverse_var = tk.BooleanVar(value=False)
-# tk.Checkbutton(frame_btn, text="🔁 Reverse direction", variable=reverse_var).grid(row=3, column=0, columnspan=3)
-
-# tk.Button(frame_btn, text="⏩ Next voltage", width=20, bg="#e6e6fa", command=next_voltage)\
-#     .grid(row=4, column=0, columnspan=3, pady=5)
-# tk.Button(frame_btn, text="🔄 Reset mode", width=20, bg="#e6e6fa", command=reset_mode)\
-#     .grid(row=5, column=0, columnspan=3, pady=5)
-# tk.Button(frame_btn, text="🔄 Check for update", width=20, bg="#e6ffe6", command=check_update)\
-#     .grid(row=6, column=0, columnspan=3, pady=5)
-# tk.Button(frame_btn, text="❌ Exit", width=20, bg="#ffcccc", command=quit_app)\
-#     .grid(row=7, column=0, columnspan=3, pady=5)
-
-
-# # ================= Footer chuyên nghiệp =================
-# footer_frame = tk.Frame(root, bg="#f0f7ff", height=40)
-# footer_frame.pack_propagate(False)
-# footer_frame.pack(side="bottom", fill="x")
-
-# # Dòng bản quyền
-# copyright_text = "© 2025 BuiVuDuyTruong-Embedded. All rights reserved."
-# lbl_copyright = tk.Label(
-#     footer_frame,
-#     text=copyright_text,
-#     bg="#f0f7ff",
-#     fg="#555555",
-#     font=("Arial", 8)
-# )
-# lbl_copyright.pack(side="left", padx=5)
-
-# # ==== LINK AREA ====
-# def callback(url):
-#     webbrowser.open_new(url)
-
-# # Link frame ở giữa
-# link_frame = tk.Frame(footer_frame, bg="#f0f7ff")
-# link_frame.pack(side="right", pady=2)  # top để canh giữa theo chiều ngang
-
-# def load_icon(path, size=None):
-#     """Load icon từ path. Nếu size=None thì giữ nguyên, ngược lại resize."""
-#     abs_path = resource_path(path)
-#     try:
-#         img = Image.open(abs_path)
-#     except Exception as e:
-#         print("Icon load failed:", abs_path, e)
-#         # fallback: create a blank image
-#         img = Image.new("RGBA", (size or (20,20)), (200,200,200,0))
-#     if size:
-#         img = img.resize(size, Image.LANCZOS)
-#     return ImageTk.PhotoImage(img)
-
-# # Dùng chung một hàm
-# fb_icon = load_icon("assets/icons8-facebook-48.png", (20, 20))
-# linkedin_icon = load_icon("assets/icons8-linkedin-48.png", (20, 20))
-# github_icon = load_icon("assets/icons8-github-32.png", (20, 20))
-
-# def make_icon_link(parent, icon, url, tooltip=""):
-#     lbl = tk.Label(parent, image=icon, bg="#f0f7ff", cursor="hand2")
-#     lbl.image = icon  # giữ reference tránh GC
-#     lbl.pack(side="left", padx=8)
-#     lbl.bind("<Button-1>", lambda e: callback(url))
-#     return lbl
-
-# # Tạo 3 icon link
-# make_icon_link(link_frame, fb_icon, "https://www.facebook.com/bui.truong.902266")
-# make_icon_link(link_frame, linkedin_icon, "https://www.linkedin.com/in/b%C3%B9i-tr%C6%B0%E1%BB%9Dng-embedded/")
-# make_icon_link(link_frame, github_icon, "https://github.com/TruongBVD69")
-
-# # Phiên bản app
-# app_version_text = f"Version: {CURRENT_VERSION}"
-# lbl_version = tk.Label(
-#     footer_frame,
-#     text=app_version_text,
-#     bg="#f0f7ff",
-#     fg="#555555",
-#     font=("Arial", 8)
-# )
-# lbl_version.pack(side="right", padx=5)
-
-# root.mainloop()
