@@ -1,0 +1,6 @@
+pyserial>=3.5,<4.0
+requests>=2.32.0,<3.0
+Pillow>=11.0.0,<12.0
+pywin32>=308; platform_system == "Windows"
+SpeechRecognition>=3.14.0,<4.0
+PyAudio>=0.2.14,<0.3
